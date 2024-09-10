@@ -1,0 +1,41 @@
+dataset:                                            # Dataset configuration
+    dataset_name: 'MyDataset'                       # Dataset name
+    data_path: 'data'                               # Dataset path
+    split: ''                                       # Dataset split. If '', it assumes there is only one split
+    max_samples:                                    # Maximum number of samples to load
+    batch_size: 20                                  # Batch size
+    start_sample: 0                                 # Start sample index. Only used if max_samples is not None
+
+llama:
+    model_path: ./pretrained_model/Meta-Llama-3.1-8B-Instruct
+    max_batch_size: 4
+    max_tokens: 2048
+    do_sample: True
+    temperature: 0.6
+    top_p: 0.9
+
+blip:
+    model_path: ./pretrained_model/blip2-flan-t5-xxl
+
+internvl:
+    model_path: ./pretrained_model/InternVL2-8B
+
+owlvit:
+    model_path: ./pretrained_model/owlvit-base-patch32
+    threshold: 0.1
+
+clip:
+    model_path: RN50
+    threshold: 0.7
+
+# Saving and loading parameters
+save: True                                          # Save the results to a file
+results_dir: ./results/                             # Directory to save the results
+log_every: 20                                       # Log accuracy every n batches
+exp_name: run                                       # experiment name
+seed: 0                                             # set seed for reproducibility
+
+
+mode: modular
+question_type: mc
+video_context: ./datas/blip2t5xxl.json
