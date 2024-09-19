@@ -1,6 +1,6 @@
-CUDA_VISIBLE_DEVICES=0 python jcef.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python ours.py \
     --options \
-    exp_name internvl_internlm \
+    exp_name ours \
     dataset.dataset_name NExTQA \
     dataset.data_path datas/NExT-QA \
     dataset.split val \
@@ -9,5 +9,4 @@ CUDA_VISIBLE_DEVICES=0 python jcef.py \
     dataset.batch_size 20 \
     dataset.start_sample 0 \
     log_freq 1 \
-    video_context datas/internvl_brief_allframe.json \
-    mode jcef
+    mode ours_baseline

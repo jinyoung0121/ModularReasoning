@@ -123,7 +123,7 @@ class NExTQADataset(Dataset):
 
         out_dict = {"sample_id": sample_id, "answer": answer, "image": video, "query": question, 'pil_img': -1,
                     "query_type": query_type, 'index': idx, 'possible_answers': possible_answers,
-                    'extra_context': possible_answers, 'video_id': video_name}
+                    'extra_context': possible_answers, 'video_id': video_name, 'video_path': video_path}
 
         return out_dict
 

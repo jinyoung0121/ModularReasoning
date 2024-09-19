@@ -7,7 +7,7 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
-from engine import Program_generation, Module1, Module2, Module3
+from engine import Program_generation, Stage1, Stage2, FinalPrediction
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
@@ -47,15 +47,31 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
+    all_memories = []
 
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
-    header = '[LLM_only]'
+    header = '[Ours baseline]'
     for i, batch in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
-    
+        
+        # initialize External Memory
+        logging.info('Initialize External Memory')
+        EXTERNAL_MEMORY = []
+        for sample_id, frames, query in zip(batch['sample_id'], batch['image'], batch['query']):
+            EXTERNAL_MEMORY.append({'sample_id':sample_id,
+                                    'original_question': query,
+                                    'num_frames': frames.size(0),
+                                    'question': query,
+                                    'frame_ids': [idx for idx in range(frames.size(0))],
+                                    'phrases': ['',''],
+                                    'conjunction': 'none',
+                                    'require_ocr': False,
+                                    'qa_type': '',
+                                    'error': None,
+                                    'VLM_answers': None,})
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -63,15 +79,54 @@ def main():
         all_query_types += batch['query_type']
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
+        
+        # Stage1 program generation
+        logging.info('Start Stage1 program generation')
+        S1_input = [{'question': memory['question']} for memory in EXTERNAL_MEMORY]
+        S1_programs = Program_generation(config, device=device, data=S1_input, prompt_type='stage1')
+        
+        # Stage1 processing then update External Memory
+        logging.info('Start stage1 processing')
+        S1_input = [{'program': program} for program in S1_programs]
+        EXTERNAL_MEMORY = Stage1(config, EXTERNAL_MEMORY, data=S1_input, device=device)
 
-        # Final prediction (without using video context, only question)
+        # Stage2 program generation
+        logging.info('Start stage2 program generation')
+        S2_input = [{'phrases': memory['phrases'], 'conjunction': memory['conjunction'], 'image': image, 'video_path': video_path}\
+                        for memory, image, video_path in zip(EXTERNAL_MEMORY, batch['image'], batch['video_path'])]
+        S2_programs = Program_generation(config, device=device, data=S2_input, prompt_type='stage2')
+        
+        # Stage2 processing then update External Memory
+        logging.info('Start stage2 processing')
+        S2_input = [{'program': program, 'image': image, 'video_path': video_path}\
+                        for program, image, video_path in zip(S2_programs, batch['image'], batch['video_path'])]
+        EXTERNAL_MEMORY = Stage2(config, EXTERNAL_MEMORY, data=S2_input, device=device)
+        
+        # Final prediction
         logging.info('Start final prediction')
-        Final_input = [{'question': question, 'option': option } \
-                                for question, option in zip(batch['query'], batch['possible_answers'])]
-        Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='llm_only')
-
+        Final_input = [{'question': memory['question'], 'option': option, 'video_path': video_path, 'frame_ids': memory['frame_ids']}\
+                        for memory, option, video_path in zip(EXTERNAL_MEMORY, batch['possible_answers'], batch['video_path'])]
+        Final_predictions = FinalPrediction(config, device=device, data=Final_input)
+        
+        # # create Stage1 input
+        # S1_input = [memory['question'] for memory in EXTERNAL_MEMORY]
+        # # execute Module1 then update External Memory
+        # EXTERNAL_MEMORY = Stage1(interpreter, S1_input, EXTERNAL_MEMORY)
+        
+        # # create Stage2 input
+        # S2_input = [{'phrases': memory['phrases'], 'conjunction': memory['conjunction'], 'image': image, 'video_path': video_path} for memory, image, video_path in zip(EXTERNAL_MEMORY, batch['image'], batch['video_path'])]
+        # # execute Module2 then update External Memory
+        # EXTERNAL_MEMORY = Stage2(interpreter, S2_input, EXTERNAL_MEMORY, batch)
+        
+        # # create Final prediction input
+        # Final_input = [{'video_path': video_path, 'question': question, 'option': option, 'frame_ids': memory['frame_ids']} for \
+        #                     video_path, question, option, memory in zip(batch['video_path'], batch['query'], batch['possible_answers'], EXTERNAL_MEMORY)]
+        # # execute Final prediction then return final_answer
+        # final_answers = interpreter.step_interpreters['vqa_base'].video_predict(Final_input)
+        
         # update information
         all_results += Final_predictions
+        all_memories += EXTERNAL_MEMORY
         
         # compute metric
         try:
@@ -88,13 +143,14 @@ def main():
             if util.is_main_process():
                 # log accuracy
                 with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
-                    header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Accuracy at Batch [{i + 1:>3}/{len(dataloader):>3}] : '
+                    header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}] Accuracy at Batch [{i + 1:>3}/{len(dataloader):>3}] : '
                     f.write(header + json.dumps(metric_stats) + '\n')
             # log information
             final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                            'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
             util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
@@ -106,7 +162,7 @@ def main():
         metric_logger.update(accuracy=accuracy)
     except Exception as e:
         print(f'Error computing accuracy: {e}')
-
+    
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     metric_stats = {k: "{:.4f}".format(meter.global_avg2) for k, meter in metric_logger.meters.items()}
@@ -115,17 +171,18 @@ def main():
         if util.is_main_process():
             # log accuracy
             with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
-                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Final Accuracy : '
+                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}] Final Accuracy : '
                 f.write(header + json.dumps(metric_stats) + '\n')
         # log information
         final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                         'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
         util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logging.info(f"End run\nElapsed time: {total_time_str}")
-        
+    
 if __name__  == '__main__':
     main()

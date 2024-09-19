@@ -1,112 +1,142 @@
 import os
 import json
 import torch
-import math
-from tqdm import tqdm
+import logging
 import time
 import datetime
 import pathlib
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch.multiprocessing as mp
-from functools import partial
-from torch.utils.data import DataLoader
-from omegaconf import OmegaConf
-
 from configs import config
-from engine.utils import ProgramInterpreter
-from util import save_json, FileLoggingConsole, set_seed
+from engine import Program_generation
+import util
+from datasets import get_dataset
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
-def my_collate(batch):
-    # Avoid stacking images (different size). Return everything as a list
-    to_return = {k: [d[k] for d in batch] for k in batch[0].keys()}
-    return to_return
-
-def load_video_context(config, video_id):
+def load_video_context(config, video_id, vlm_answer):
     with open(config.video_context, 'r') as f:
         datas = json.load(f)
     contexts = []
     # context formatting
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
         contexts.append(f"[frame{frame_idx:>4}]caption: {caption}.")
+    if vlm_answer:
+        return '\n'.join(contexts) + '\n' + vlm_answer
     return '\n'.join(contexts)
 
 def main():
     mp.set_start_method('spawn')
-    from datasets import get_dataset
+    util.init_distributed_mode(config)
+    util.setup_logger()
+    device = torch.device(config.device)
+    util.setup_seeds(config)
+
     now = datetime.datetime.now()
     time_str = now.strftime("%Y-%m-%d_%H-%M")
 
-    results_dir = pathlib.Path(config.results_dir)
-    results_dir = results_dir / config.dataset.dataset_name / config.dataset.split / config.mode / f"{config.exp_name}_{time_str}"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    filename_json = os.path.join(results_dir, "results.json")
-    
-    console = FileLoggingConsole(path=os.path.join(results_dir,"results.log"), highlight=False, record=True)
-    console.log(OmegaConf.to_container(config))
-
-    set_seed(config.seed)
-
-    batch_size = config.dataset.batch_size
-    num_processes = min(batch_size, 50)
-    
-    interpreter = ProgramInterpreter(config=config, mode=config.mode)
+    if config.save:
+        results_dir = pathlib.Path(config.results_dir)
+        results_dir = results_dir / config.dataset.dataset_name / config.dataset.split / config.mode / f"{config.exp_name}_{time_str}"
+        results_dir.mkdir(parents=True, exist_ok=True)
     
     dataset = get_dataset(config.dataset)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True,
-                            collate_fn=my_collate)
+    if config.distributed:
+        sampler = DistributedSampler(dataset, num_replicas=util.get_world_size(), rank=util.get_rank())
+    else:
+        sampler = None
+    dataloader = DataLoader(dataset, sampler=sampler, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers,
+                            pin_memory=True, drop_last=False, collate_fn=util.my_collate)
 
+    if config.distributed:
+        dataloader.sampler.set_epoch(-1)
+
+    # initialize information list
     all_results = []
     all_answers = []
     all_possible_answers = []
     all_queries = []
     all_query_types = []
     all_ids = []
+    all_sample_ids = []
 
     start_time = time.time()
-    console.log("Start run")
-    for i, batch in tqdm(enumerate(dataloader), total=len(dataloader)):
-        # create Final prediction input
-        Final_input = [{'video_context': load_video_context(config, video_id), 'VLM_answer': '','question': question, 'option': option } \
-                            for video_id, question, option in zip(batch['video_id'], batch['query'], batch['possible_answers'])]
-        # execute Final prediction then return final_answer
-        final_answers = interpreter.step_interpreters['llama'].generate(Final_input, prompt_type='final')
+    logging.info('Start run')
+    metric_logger = util.MetricLogger(delimiter='  ')
+    header = '[JCEF]'
+    for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
+        inner_start_time = time.time()
+        logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
 
-        # update list
-        all_results += final_answers
+        # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
         all_queries += batch['query']
         all_query_types += batch['query_type']
         all_ids += batch['video_id']
+        all_sample_ids += batch['sample_id']
+
+        # Final prediction (without using VLM answer : set to None)
+        logging.info('Start final prediction')
+        Final_input = [{'video_context': load_video_context(config, video_id, None), 'question': question, 'option': option } \
+                                for video_id, question, option in zip(batch['video_id'], batch['query'], batch['possible_answers'])]
+        Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='final')
+
+        # update information
+        all_results += Final_predictions
         
-        if (i + 1) % config.log_every == 0:
-            try:
-                accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
-                console.log(f'Accuracy at Batch {i}/{len(dataloader)}: {accuracy}')
-            except Exception as e:
-                console.log(f'Error computing accuracy: {e}')
-                
-            if config.save:
-                final_datas = {"video_id": all_ids, "query": all_queries, "query_type": all_query_types, "answer": all_answers,
-                            "possible_answer": all_possible_answers, "result": all_results, "correction": all_corrections}
-                final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-                save_json(final_datas, filename_json)
+        # compute metric
+        try:
+            accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
+            metric_logger.update(accuracy=accuracy)
+        except Exception as e:
+            print(f'Error computing accuracy: {e}')
 
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    console.log(f"End run\nElapsed time: {total_time_str}")
+        # gather the stats from all processes
+        metric_logger.synchronize_between_processes()
+        metric_stats = {k: "{:.4f}".format(meter.global_avg2) for k, meter in metric_logger.meters.items()}
+        logging.info(metric_stats)
+        if config.save:
+            if util.is_main_process():
+                # log accuracy
+                with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
+                    header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Accuracy at Batch [{i + 1:>3}/{len(dataloader):>3}] : '
+                    f.write(header + json.dumps(metric_stats) + '\n')
+            # log information
+            final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
+                           'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
+            final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
+            util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
 
+        inner_total_time = time.time() - inner_start_time
+        inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
+        logging.info(f'End inner run [{i + 1:>3}/{len(dataloader):>3}]\nElapsed time: {inner_total_time_str}')
+
+    # compute metric
     try:
         accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
-        console.log(f'Final accuracy: {accuracy}')
+        metric_logger.update(accuracy=accuracy)
     except Exception as e:
         print(f'Error computing accuracy: {e}')
 
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    metric_stats = {k: "{:.4f}".format(meter.global_avg2) for k, meter in metric_logger.meters.items()}
+    logging.info(metric_stats)
     if config.save:
-        final_datas = {"video_id": all_ids, "query": all_queries, "query_type": all_query_types, "answer": all_answers,
-                       "possible_answer": all_possible_answers, "result": all_results, "correction": all_corrections}
+        if util.is_main_process():
+            # log accuracy
+            with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
+                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Final Accuracy : '
+                f.write(header + json.dumps(metric_stats) + '\n')
+        # log information
+        final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
+                        'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-        save_json(final_datas, filename_json)
+        util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    logging.info(f"End run\nElapsed time: {total_time_str}")
         
 if __name__  == '__main__':
     main()

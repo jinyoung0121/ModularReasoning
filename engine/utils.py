@@ -1,7 +1,3 @@
-import os
-from PIL import Image
-import numpy as np
-import copy
 from .step_interpreters import register_step_interpreters, parse_step
 
 class Program:
@@ -11,12 +7,12 @@ class Program:
         self.instructions =  self.prog_str.split('\n')
 
 class ProgramInterpreter:
-    def __init__(self, config, mode='modular'):
-        self.step_interpreters = register_step_interpreters(config, mode=mode)
+    def __init__(self, config, **kwargs):
+        self.step_interpreters, self.loaded_model = register_step_interpreters(config, **kwargs)
     
     def execute_step(self,prog_step,inspect):
         step_name = parse_step(prog_step.prog_str,partial=True)['step_name']
-        print(step_name)
+        # print(step_name)
         return self.step_interpreters[step_name].execute(prog_step,inspect)
 
     def execute(self,prog,init_state,inspect=False):

@@ -7,7 +7,7 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
-from engine import Program_generation, Module1, Module2, Module3
+from engine import Program_generation, Stage1, Stage2, FinalPrediction
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
@@ -47,15 +47,16 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
+    all_memories = []
 
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
-    header = '[LLM_only]'
+    header = '[VideoVLM_only]'
     for i, batch in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
-    
+
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -63,13 +64,15 @@ def main():
         all_query_types += batch['query_type']
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
-
-        # Final prediction (without using video context, only question)
+        
+        # Final prediction. Since navie VLM, pass an empty frame_ids to use the entire video as input
         logging.info('Start final prediction')
-        Final_input = [{'question': question, 'option': option } \
-                                for question, option in zip(batch['query'], batch['possible_answers'])]
-        Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='llm_only')
-
+        Final_input = [{'question': question, 'option': option, 'video_path': video_path, 'frame_ids': []}\
+                            for question, option, video_path in zip(batch['query'], batch['possible_answers'], batch['video_path'])]
+        Final_predictions = FinalPrediction(config, device=device, data=Final_input)
+        
+        ### TODO: retrieve -> VLM prediction (only convert question into phrase, not parsing)
+        
         # update information
         all_results += Final_predictions
         
@@ -126,6 +129,6 @@ def main():
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logging.info(f"End run\nElapsed time: {total_time_str}")
-        
+         
 if __name__  == '__main__':
     main()

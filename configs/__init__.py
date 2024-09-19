@@ -10,6 +10,10 @@ def parse_args():
     llama = parser.add_argument_group("llama")
     llama.add_argument('--llama.model_path', type=str, default='./pretrained_model/Meta-Llama-3.1-8B-Instruct', help='llama path')
 
+    # internlm argument
+    internlm = parser.add_argument_group("internlm")
+    internlm.add_argument('--internlm.model_path', type=str, default='./pretrained_model/internlm2_5-7b-chat', help='llama path')
+
     # blip argument
     blip = parser.add_argument_group("blip")
     blip.add_argument('--blip.model_path', type=str, default='./pretrained_model/blip2-flan-t5-xxl', help='blip path')
@@ -17,6 +21,11 @@ def parse_args():
     # internvl argument
     internvl = parser.add_argument_group("internvl")
     internvl.add_argument('--internvl.model_path', type=str, default='./pretrained_model/InternVL2-8B', help='internvl2 path')
+
+    # qd_detr argument
+    qd_detr = parser.add_argument_group("qd_detr")
+    qd_detr.add_argument('--qd_detr.model_checkpoint_path', type=str, default='./pretrained_model/QD_DETR/run_on_video/qd_detr_ckpt/model_best.ckpt', help='qd_detr best checkpoint path')
+    qd_detr.add_argument('--qd_detr.clip_model', type=str, default='ViT-B/32', help='clip model type in qd_detr')
 
     # owlvit argument
     owlvit = parser.add_argument_group("owlvit")
@@ -33,6 +42,14 @@ def parse_args():
     wandb.add_argument("--wandb.use_wandb", action='store_true')
     wandb.add_argument("--wandb.project", default="morevqa")
     wandb.add_argument("--wandb.group", default="default")
+
+    # distributed arguments
+    parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
+    parser.add_argument('--local_rank', default=-1, type=int)
+    parser.add_argument('--dist_on_itp', action='store_true')
+    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--device', default='cuda', help='device to use for training / testing')
+    parser.add_argument('--num_workers', default=2, type=int)
 
     # others
     parser.add_argument(
@@ -71,6 +88,8 @@ def build_custom_config(args):
     for (k, v) in args._get_kwargs():
         if len(k.split('.')) == 2:
             custom_config[k.split('.')[0]][k.split('.')[1]] = v
+        else:
+            custom_config[k] = v
     return dict(custom_config)
     
 
