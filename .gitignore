@@ -2,3 +2,4 @@ pretrained_model
 results
 datas
 *.pyc
+__pycache__

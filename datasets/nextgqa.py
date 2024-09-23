@@ -287,7 +287,7 @@ class NExTGQADataset(Dataset):
                     
                 # Compute Accuracy of the sample for QA
                 qa_score, _ = self.accuracy([prediction[idx]], [ground_truth[idx]], [possible_answers[idx]], [query_type[idx]])
-                acc[thd] += qa_score
+                acc[thd] += (qa_score and (max_tIoP >= thd))
                 
             cnt += 1
             mIoU += max_tIoU
@@ -307,6 +307,15 @@ class NExTGQADataset(Dataset):
 # Below is code from https://github.com/doc-doc/NExT-OE/blob/main/eval_oe.py
 
 def get_tIoU(loc, span):
+    """
+    Args:
+        loc (list): Ground-truth timepan 
+        span (list): Predicted timespan 
+
+    Returns:
+        IoU (float): Intersection over Union
+        IoP (float): Intersection over Prediction 
+    """
     if span[0] == span[-1]:
         if loc[0] <= span[0] and span[0] <= loc[1]:
             return 0, 1

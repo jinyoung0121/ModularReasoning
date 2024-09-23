@@ -306,7 +306,7 @@ class NExTQADataset(Dataset):
                     
                 # Compute Accuracy of the sample for QA
                 qa_score, _ = self.accuracy([prediction[idx]], [ground_truth[idx]], [possible_answers[idx]], [query_type[idx]])
-                acc[thd] += qa_score
+                acc[thd] += (qa_score and (max_tIoP >= thd))
                 
             cnt += 1
             mIoU += max_tIoU
