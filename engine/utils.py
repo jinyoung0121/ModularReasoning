@@ -26,13 +26,14 @@ class ProgramInterpreter:
         prog_steps = [Program(instruction.split(':')[0],init_state=prog.state) \
             for instruction in prog.instructions]
         html_str = '<hr>'
+        
         for prog_step in prog_steps:
             if inspect:
                 step_output, step_html = self.execute_step(prog_step,inspect)
                 html_str += step_html + '<hr>'
             else:
-                step_output = self.execute_step(prog_step,inspect)
-
+                step_output = self.execute_step(prog_step, inspect)
+            
         if inspect:
             return step_output, prog.state, html_str
         

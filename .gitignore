@@ -1,3 +1,4 @@
-pretrained_model/
-results/
-datas/
+pretrained_model
+results
+datas
+*.pyc

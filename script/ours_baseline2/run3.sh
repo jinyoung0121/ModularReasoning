@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.run --nproc_per_node 1 --master_port=1111 ours_baseline.py \
+CUDA_VISIBLE_DEVICES=6 python -m torch.distributed.run --nproc_per_node 1 --master_port=1100 ours_baseline2.py \
     --options \
     exp_name internvl_internlm \
     dataset.dataset_name NExTQA \
@@ -7,7 +7,7 @@ CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.run --nproc_per_node 1 --mast
     dataset.version multiplechoice \
     dataset.fps 1 \
     dataset.start_sample 0 \
-    batch_size 5 \
-    log_freq 5 \
+    batch_size 100 \
+    log_freq 10 \
     video_context datas/internvl_brief.json \
     mode ours_baseline

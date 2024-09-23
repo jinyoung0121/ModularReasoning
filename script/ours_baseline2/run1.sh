@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.run --nproc_per_node 1 --master_port=1111 ours_baseline.py \
+CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.run --nproc_per_node 1 --master_port=1111 ours_baseline2.py \
     --options \
     exp_name internvl_internlm \
     dataset.dataset_name NExTQA \

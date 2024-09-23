@@ -1,4 +1,6 @@
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import json
 import torch
 import logging
@@ -27,6 +29,9 @@ def main():
         results_dir = pathlib.Path(config.results_dir)
         results_dir = results_dir / config.dataset.dataset_name / config.dataset.split / config.mode / f"{config.exp_name}_{time_str}"
         results_dir.mkdir(parents=True, exist_ok=True)
+        
+    config.eval_grounding = config.get('eval_grounding', False)
+    config.dataset.eval_grounding = config.eval_grounding
     
     dataset = get_dataset(config.dataset)
     if config.distributed:
@@ -48,14 +53,20 @@ def main():
     all_ids = []
     all_sample_ids = []
     all_memories = []
+    all_num_frames = []
+    
     all_s2_prog = []
+    all_s1_prog = []
+    all_timespan = []
+    
 
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
-    header = '[Ours baseline]'
-    for i, batch in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
+    header = '[Ours baseline2]'
+    for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
+        logging.info('*'* 90)
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
         
         # initialize External Memory
@@ -73,6 +84,8 @@ def main():
                                     'qa_type': '',
                                     'error': None,
                                     'VLM_answers': None,})
+            all_num_frames.append(frames.size(0))
+            
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -81,72 +94,75 @@ def main():
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
         
+        if config.eval_grounding:
+            all_timespan += batch['timespan']
+        
         # Stage1 program generation
         logging.info('Start Stage1 program generation')
         S1_input = [{'question': memory['question']} for memory in EXTERNAL_MEMORY]
-        S1_programs = Program_generation(config, device=device, data=S1_input, prompt_type='stage1')
+        S1_programs = Program_generation(config, device=device, data=S1_input, prompt_type='stage1_fast')
         
-        # Stage1 processing then update External Memory
-        logging.info('Start stage1 processing')
-        S1_input = [{'program': program} for program in S1_programs]
-        EXTERNAL_MEMORY = Stage1(config, EXTERNAL_MEMORY, data=S1_input, device=device)
-
-        # Stage2 program generation
+        # Stage1 processing is not required due to the output can be directly utilized. Manually change external memory
+        for i, program in enumerate(S1_programs):
+            EXTERNAL_MEMORY[i]['phrases'] = ['', program]
+        
+        
+        # Stage2 program generation. Since utilizing only phrased question, set 'phrase': ['none', phrased question], 'conjunction': 'none'
         logging.info('Start stage2 program generation')
-        S2_input = [{'phrases': memory['phrases'], 'conjunction': memory['conjunction'], 'image': image, 'video_path': video_path}\
-                        for memory, image, video_path in zip(EXTERNAL_MEMORY, batch['image'], batch['video_path'])]
-        S2_programs = Program_generation(config, device=device, data=S2_input, prompt_type='stage2')
+        S2_input = [{'phrases': ['none', phrased_question], 'conjunction': 'none', 'image': image, 'video_path': video_path}\
+                        for phrased_question, memory, image, video_path in zip(S1_programs, EXTERNAL_MEMORY, batch['image'], batch['video_path'])]
+        S2_programs = Program_generation(config, device=device, data=S2_input, prompt_type='stage2_fast')
         
         # Stage2 processing then update External Memory
         logging.info('Start stage2 processing')
         S2_input = [{'program': program, 'image': image, 'video_path': video_path}\
                         for program, image, video_path in zip(S2_programs, batch['image'], batch['video_path'])]
-
-        
         EXTERNAL_MEMORY = Stage2(config, EXTERNAL_MEMORY, data=S2_input, device=device)
-            
+
         # Final prediction
         logging.info('Start final prediction')
         Final_input = [{'question': memory['question'], 'option': option, 'video_path': video_path, 'frame_ids': memory['frame_ids']}\
                         for memory, option, video_path in zip(EXTERNAL_MEMORY, batch['possible_answers'], batch['video_path'])]
         Final_predictions = FinalPrediction(config, device=device, data=Final_input)
         
-        # # create Stage1 input
-        # S1_input = [memory['question'] for memory in EXTERNAL_MEMORY]
-        # # execute Module1 then update External Memory
-        # EXTERNAL_MEMORY = Stage1(interpreter, S1_input, EXTERNAL_MEMORY)
-        
-        # # create Stage2 input
-        # S2_input = [{'phrases': memory['phrases'], 'conjunction': memory['conjunction'], 'image': image, 'video_path': video_path} for memory, image, video_path in zip(EXTERNAL_MEMORY, batch['image'], batch['video_path'])]
-        # # execute Module2 then update External Memory
-        # EXTERNAL_MEMORY = Stage2(interpreter, S2_input, EXTERNAL_MEMORY, batch)
-        
-        # # create Final prediction input
-        # Final_input = [{'video_path': video_path, 'question': question, 'option': option, 'frame_ids': memory['frame_ids']} for \
-        #                     video_path, question, option, memory in zip(batch['video_path'], batch['query'], batch['possible_answers'], EXTERNAL_MEMORY)]
-        # # execute Final prediction then return final_answer
-        # final_answers = interpreter.step_interpreters['vqa_base'].video_predict(Final_input)
-        
         # update information
         all_results += Final_predictions
         all_memories += EXTERNAL_MEMORY
         
-        # update s2 program (RETRIEVE)
+        # update s1, s2 program (intermediate generated program)
         s2_prog_list = [i.split('\n') for i in S2_programs]
         all_s2_prog += s2_prog_list
-        
+        all_s1_prog += S1_programs
         
         # compute metric
         try:
+            logging.info('Start evaluating QA')
             accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
             metric_logger.update(accuracy=accuracy)
+
+            if config.eval_grounding:
+                logging.info('Start evaluating grounding')
+                ground_result = dataset.grounding(all_results, all_answers, all_possible_answers, all_query_types,
+                                                all_memories, all_timespan, all_num_frames) 
+                # return {'mIoU':mIoU, 'mIoP': mIoP, 'IoU': IoU, 'IoP':IoP, 'cnt_empty':cnt_empty, 'acc':acc}
+                metric_logger.update(acc3=ground_result['acc'][0.3])
+                metric_logger.update(acc5=ground_result['acc'][0.5])
+                metric_logger.update(mIoU=ground_result['mIoU'])
+                metric_logger.update(mIoP=ground_result['mIoP'])
+                metric_logger.update(IoU3=ground_result['IoU'][0.3])
+                metric_logger.update(IoU5=ground_result['IoU'][0.5])
+                metric_logger.update(IoP3=ground_result['IoP'][0.3])
+                metric_logger.update(IoP5=ground_result['IoP'][0.5])            
+                metric_logger.update(cnt_empty=ground_result['cnt_empty'])          
+                
         except Exception as e:
             print(f'Error computing accuracy: {e}')
-
+            
         # gather the stats from all processes
         metric_logger.synchronize_between_processes()
         metric_stats = {k: "{:.4f}".format(meter.global_avg2) for k, meter in metric_logger.meters.items()}
         logging.info(metric_stats)
+        
         if config.save:
             if util.is_main_process():
                 # log accuracy
@@ -157,23 +173,41 @@ def main():
             final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                            'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-            util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id',)
-            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id',)
+            util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
             
-            s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 's2_prog': all_s2_prog}
+            s1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's1_prog': all_s1_prog}
+            s1_prog_save = list(map(lambda x: dict(zip(s1_prog_save.keys(), x)), zip(*s1_prog_save.values())))
+            util.save_result(s1_prog_save, results_dir, 's1_program', remove_duplicate='sample_id',)
+            
+            s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's2_prog': all_s2_prog}
             s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
             util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
             
-
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
         logging.info(f'End inner run [{i + 1:>3}/{len(dataloader):>3}]\nElapsed time: {inner_total_time_str}')
-        
 
     # compute metric
     try:
         accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
         metric_logger.update(accuracy=accuracy)
+        
+        if config.eval_grounding:
+            logging.info('Start evaluating grounding')
+            ground_result = dataset.grounding(all_results, all_answers, all_possible_answers, all_query_types,
+                                            all_memories, all_timespan, all_num_frames) 
+            # return {'mIoU':mIoU, 'mIoP': mIoP, 'IoU': IoU, 'IoP':IoP, 'cnt_empty':cnt_empty, 'acc':acc}
+            metric_logger.update(acc3=ground_result['acc'][0.3])
+            metric_logger.update(acc5=ground_result['acc'][0.5])
+            metric_logger.update(mIoU=ground_result['mIoU'])
+            metric_logger.update(mIoP=ground_result['mIoP'])
+            metric_logger.update(IoU3=ground_result['IoU'][0.3])
+            metric_logger.update(IoU5=ground_result['IoU'][0.5])
+            metric_logger.update(IoP3=ground_result['IoP'][0.3])
+            metric_logger.update(IoP5=ground_result['IoP'][0.5])            
+            metric_logger.update(cnt_empty=ground_result['cnt_empty'])
+        
     except Exception as e:
         print(f'Error computing accuracy: {e}')
     
@@ -191,10 +225,14 @@ def main():
         final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                         'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-        util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id',)
-        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id',)
+        util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
         
-        s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 's2_prog': all_s2_prog}
+        s1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's1_prog': all_s1_prog}
+        s1_prog_save = list(map(lambda x: dict(zip(s1_prog_save.keys(), x)), zip(*s1_prog_save.values())))
+        util.save_result(s1_prog_save, results_dir, 's1_program', remove_duplicate='sample_id',)
+        
+        s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's2_prog': all_s2_prog}
         s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
         util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
 

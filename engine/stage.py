@@ -84,6 +84,7 @@ def Stage2(config, EXTERNAL_MEMORY, **kwargs):
         # initialize frame_id (indicator)
         indicator = torch.zeros(data['image'][0].size(0))
         indicator[EXTERNAL_MEMORY[i]['frame_ids']] = 1
+        
         try:
             # get output by program execution
             final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
@@ -94,7 +95,7 @@ def Stage2(config, EXTERNAL_MEMORY, **kwargs):
             EXTERNAL_MEMORY[i]['frame_ids'] = []
             if EXTERNAL_MEMORY[i]['error'] == None:
                 EXTERNAL_MEMORY[i]['error'] = 'stage2'
-
+                
     metric_logger.synchronize_between_processes()
     if util.is_dist_avail_and_initialized():
         dist.barrier()

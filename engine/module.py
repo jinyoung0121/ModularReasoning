@@ -97,6 +97,7 @@ def Module2(config, EXTERNAL_MEMORY, **kwargs):
             EXTERNAL_MEMORY[i]['frame_ids'] = []
             if EXTERNAL_MEMORY[i]['error'] == None:
                 EXTERNAL_MEMORY[i]['error'] = 'module2'
+                
 
     metric_logger.synchronize_between_processes()
     if util.is_dist_avail_and_initialized():
