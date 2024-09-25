@@ -75,6 +75,8 @@ class NExTQADataset(Dataset):
             for video in os.listdir(os.path.join(self.data_path, 'videos', directory)):
                 self.video_to_dir[video.split('.')[0]] = directory
 
+        self.nlp = spacy.load('en_core_web_lg')
+        
     def get_sample_path(self, index):
         sample_id = self.sample_ids[index]
         cur_sample = self.sample_list.loc[sample_id]
@@ -154,21 +156,40 @@ class NExTQADataset(Dataset):
         assert len(prediction) == len(ground_truth)
         score = 0
         corrections = []
+
+        num = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
+        num_over = {'C': 0, 'T': 0, 'D': 0}
+        num_all = 0
+        # accuracy init
+        acc = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
+        acc_over = {'C': 0, 'T': 0, 'D': 0}
         if self.version == 'openended':
             for p, g, qt in zip(prediction, ground_truth, query_type):
-                if isinstance(p, list) or isinstance(p, tuple):
-                    p = p[0]  # p[1] is the info dict
-                if p is None:
-                    print('None case')
-                    p = 'object'  # To select some word
-                if qt == 'DC' or qt == 'DB':
-                    s = 1 if remove_stop(p) == remove_stop(g) else 0
+                if qt == 'TP':
+                    qt = 'TN'
+                num_all += 1
+                num_over[qt[0]] += 1
+                num[qt] += 1
+                
+                # accuracy
+                if p.lower() == g.lower():
+                    score += 1
+                    acc_over[qt[0]] += 1
+                    acc[qt] += 1
+                    corrections.append(True)
                 else:
-                    s = get_wups(remove_stop(p), remove_stop(g), 0)
-                score += 100 * s
-        else:
-            nlp = spacy.load('en_core_web_lg')
-            for p, g, a in zip(prediction, ground_truth, possible_answers):
+                    corrections.append(False)
+            for qt in acc.keys():
+                acc[qt] = round(acc[qt] / num[qt],4) if num[qt] > 0 else None
+            for qt in acc_over.keys():
+                acc_over[qt] = round(acc_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
+        else: # multiplechoice
+            for p, g, a, qt in zip(prediction, ground_truth, possible_answers, query_type):
+                if qt == 'TP':
+                    qt = 'TN'
+                num_all += 1
+                num_over[qt[0]] += 1
+                num[qt] += 1
                 if isinstance(p, list) or isinstance(p, tuple):
                     if len(p) == 2:
                         p = p[0]  # p[1] is the info dict
@@ -176,8 +197,8 @@ class NExTQADataset(Dataset):
                         all_answers = []
                         for pp in p:
                             if pp not in a:
-                                pred_tokens = nlp(pp)
-                                a.sort(key=lambda x: pred_tokens.similarity(nlp(x)), reverse=True)
+                                pred_tokens = self.nlp(pp)
+                                a.sort(key=lambda x: pred_tokens.similarity(self.nlp(x)), reverse=True)
                                 pp = a[0]
                             all_answers.append(pp)
                         # Majority vote
@@ -205,16 +226,70 @@ class NExTQADataset(Dataset):
                     if p is None:
                         print('None case')  # Should not happen
                     else:
-                        pred_tokens = nlp(p)
-                        a.sort(key=lambda x: pred_tokens.similarity(nlp(x)), reverse=True)
+                        pred_tokens = self.nlp(p)
+                        a.sort(key=lambda x: pred_tokens.similarity(self.nlp(x)), reverse=True)
                     p = a[0]
                 if p == g:
                     score += 1
+                    acc_over[qt[0]] += 1
+                    acc[qt] += 1
                     corrections.append(True)
                 else:
                     corrections.append(False)
-        return score / len(prediction), corrections
+            for qt in acc.keys():
+                acc[qt] = round(acc[qt] / num[qt],4) if num[qt] > 0 else None
+            for qt in acc_over.keys():
+                acc_over[qt] = round(acc_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
+        # return score / len(prediction), corrections, acc
+        return score / len(prediction), corrections, acc_over | acc
 
+    def report_wups(self, prediction, ground_truth, possible_answers, query_type):
+        assert len(prediction) == len(ground_truth)
+        wups = []
+        num = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
+        num_over = {'C': 0, 'T': 0, 'D': 0}
+        num_all = 0
+        # wups init
+        wups0 = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
+        wups0_over = {'C': 0, 'T': 0, 'D': 0}
+        wups9 = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
+        wups9_over = {'C': 0, 'T': 0, 'D': 0}
+        wups0_all, wups9_all = 0, 0
+
+        for p, g, qt in zip(prediction, ground_truth, query_type):
+            if qt == 'TP':
+                qt = 'TN'
+            num[qt] += 1
+            num_over[qt[0]] += 1
+            num_all += 1
+            if isinstance(p, list) or isinstance(p, tuple):
+                p = p[0]  # p[1] is the info dict
+            if p is None:
+                print('None case')
+                p = 'object'  # To select some word
+            if qt == 'DC' or qt == 'DB':
+                s0 = 1 if remove_stop(p) == remove_stop(g) else 0
+                s9 = 1 if remove_stop(p) == remove_stop(g) else 0
+            else:
+                s0 = get_wups(remove_stop(p), remove_stop(g), 0)
+                s9 = get_wups(remove_stop(p), remove_stop(g), 0.9)
+            wups0[qt] += s0
+            wups9[qt] += s9
+            wups0_over[qt[0]] += s0
+            wups9_over[qt[0]] += s9
+            wups0_all += s0
+            wups9_all += s9
+            wups.append({'wups0': s0, 'wups9': s9})
+
+            
+        for qt in wups0.keys():
+            wups0[qt] = round(wups0[qt] / num[qt],4) if num[qt] > 0 else None
+            wups9[qt] = round(wups9[qt] / num[qt],4) if num[qt] > 0 else None
+        
+        for qt in wups0_over.keys():
+            wups0_over[qt] = round(wups0_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
+            wups9_over[qt] = round(wups9_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
+        return wups0_all / num_all, wups9_all / num_all, wups, wups0_over | wups0 , wups9_over | wups9
 
 # Below is code from https://github.com/doc-doc/NExT-OE/blob/main/eval_oe.py
 

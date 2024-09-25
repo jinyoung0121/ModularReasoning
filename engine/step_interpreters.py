@@ -908,6 +908,259 @@ class VQAInterpreter2(VQAInterpreter):
             QA_pool.append({'question': question, 'answer': answer})
         return QA_pool
 
+class InternVideo(torch.nn.Module):
+    step_name = 'vqa'
+    def __init__(self, config, device=None):
+        super().__init__()
+        # print(f'Registering {self.step_name} step')
+        self.dev = device
+        self.config = config
+        model_id = config.internvideo.model_path
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False,)
+        self.model = AutoModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, trust_remote_code=True)
+        self.generation_config = dict(max_new_tokens=512, do_sample=False, pad_token_id=self.tokenizer.eos_token_id)
+        self.instruction_prompt = 'Carefully watch the video and pay attention to the cause and sequence of events, the detail and movement of objects, and the action and pose of persons. Based on your observations, select the best option that accurately addresses the question.\n'
+
+    def get_index(self, bound, fps, max_frame, first_idx=0, num_segments=32):
+        if bound:
+            start, end = bound[0], bound[1]
+        else:
+            start, end = -100000, 100000
+        start_idx = max(first_idx, round(start * fps))
+        end_idx = min(round(end * fps), max_frame)
+        seg_size = float(end_idx - start_idx) / num_segments
+        frame_indices = np.array([
+            int(start_idx + (seg_size / 2) + np.round(seg_size * idx))
+            for idx in range(num_segments)
+        ])
+        return frame_indices
+    
+    def load_video(self, video_path, bound=None, num_segments=8, return_msg=False, resolution=224, hd_num=4, padding=False):
+        vr = decord.VideoReader(video_path, ctx=cpu(0), num_threads=1)
+        decord.bridge.set_bridge('torch')
+        max_frame = len(vr) - 1
+        fps = float(vr.get_avg_fps())
+        frame_indices = self.get_index(bound, fps, max_frame, first_idx=0, num_segments=num_segments)
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+
+        transform = transforms.Compose([
+            transforms.Lambda(lambda x: x.float().div(255.0)),
+            transforms.Normalize(mean, std)
+        ])
+
+        frames = vr.get_batch(frame_indices).byte()
+        frames = frames.permute(0, 3, 1, 2)
+
+        if padding:
+            frames = self.HD_transform_padding(frames.float(), image_size=resolution, hd_num=hd_num)
+        else:
+            frames = self.HD_transform_no_padding(frames.float(), image_size=resolution, hd_num=hd_num)
+
+        frames = transform(frames)
+        # print(frames.shape)
+        T_, C, H, W = frames.shape
+
+        sub_img = frames.reshape(
+            1, T_, 3, H//resolution, resolution, W//resolution, resolution
+        ).permute(0, 3, 5, 1, 2, 4, 6).reshape(-1, T_, 3, resolution, resolution).contiguous()
+
+        glb_img = F.interpolate(
+            frames.float(), size=(resolution, resolution), mode='bicubic', align_corners=False
+        ).to(sub_img.dtype).unsqueeze(0)
+
+        frames = torch.cat([sub_img, glb_img]).unsqueeze(0)
+
+        if return_msg:
+            fps = float(vr.get_avg_fps())
+            sec = ", ".join([str(round(f / fps, 1)) for f in frame_indices])
+            # " " should be added in the start and end
+            msg = f"The video contains {len(frame_indices)} frames sampled at {sec} seconds."
+            return frames, msg
+        else:
+            return frames
+    
+    def load_video_no_HD(self, video_path, bound=None, num_segments=8, return_msg=False, resolution=224, hd_num=4, padding=False):
+        vr = decord.VideoReader(video_path, ctx=cpu(0), num_threads=1)
+        decord.bridge.set_bridge('torch')
+        max_frame = len(vr) - 1
+        fps = float(vr.get_avg_fps())
+        frame_indices = self.get_index(bound, fps, max_frame, first_idx=0, num_segments=num_segments)
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+
+        transform = transforms.Compose([
+            transforms.Lambda(lambda x: x.float().div(255.0)),
+            transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(224),
+            transforms.Normalize(mean, std)
+        ])
+        
+        frames = vr.get_batch(frame_indices).byte()
+        frames = frames.permute(0, 3, 1, 2)
+        frames = transform(frames)
+        
+        T_, C, H, W = frames.shape
+
+        if return_msg:
+            fps = float(vr.get_avg_fps())
+            sec = ", ".join([str(round(f / fps, 1)) for f in frame_indices])
+            # " " should be added in the start and end
+            msg = f"The video contains {len(frame_indices)} frames sampled at {sec} seconds."
+            return frames, msg
+        else:
+            return frames
+        
+    def HD_transform_padding(self, frames, image_size=224, hd_num=6):
+        def _padding_224(frames):
+            _, _, H, W = frames.shape
+            tar = int(np.ceil(H / 224) * 224)
+            top_padding = (tar - H) // 2
+            bottom_padding = tar - H - top_padding
+            left_padding = 0
+            right_padding = 0
+
+            padded_frames = F.pad(
+                frames,
+                pad=[left_padding, right_padding, top_padding, bottom_padding],
+                mode='constant', value=255
+            )
+            return padded_frames
+
+        _, _, H, W = frames.shape
+        trans = False
+        if W < H:
+            frames = frames.flip(-2, -1)
+            trans = True
+            width, height = H, W
+        else:
+            width, height = W, H
+
+        ratio = width / height
+        scale = 1
+        while scale * np.ceil(scale / ratio) <= hd_num:
+            scale += 1
+        scale -= 1
+        new_w = int(scale * image_size)
+        new_h = int(new_w / ratio)
+
+        resized_frames = F.interpolate(
+            frames, size=(new_h, new_w),
+            mode='bicubic',
+            align_corners=False
+        )
+        padded_frames = _padding_224(resized_frames)
+
+        if trans:
+            padded_frames = padded_frames.flip(-2, -1)
+
+        return padded_frames
+
+    def find_closest_aspect_ratio(self, aspect_ratio, target_ratios, width, height, image_size):
+            best_ratio_diff = float('inf')
+            best_ratio = (1, 1)
+            area = width * height
+            for ratio in target_ratios:
+                target_aspect_ratio = ratio[0] / ratio[1]
+                ratio_diff = abs(aspect_ratio - target_aspect_ratio)
+                if ratio_diff < best_ratio_diff:
+                    best_ratio_diff = ratio_diff
+                    best_ratio = ratio
+                elif ratio_diff == best_ratio_diff:
+                    if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
+                        best_ratio = ratio
+            return best_ratio
+
+    def HD_transform_no_padding(self, frames, image_size=224, hd_num=6, fix_ratio=(2,1)):
+        min_num = 1
+        max_num = hd_num
+        _, _, orig_height, orig_width = frames.shape
+        aspect_ratio = orig_width / orig_height
+
+        # calculate the existing video aspect ratio
+        target_ratios = set(
+            (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
+            i * j <= max_num and i * j >= min_num)
+        target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
+
+        # find the closest aspect ratio to the target
+        if fix_ratio:
+            target_aspect_ratio = fix_ratio
+        else:
+            target_aspect_ratio = self.find_closest_aspect_ratio(
+                aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+
+        # calculate the target width and height
+        target_width = image_size * target_aspect_ratio[0]
+        target_height = image_size * target_aspect_ratio[1]
+        blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
+
+        # resize the frames
+        resized_frame = F.interpolate(
+            frames, size=(target_height, target_width),
+            mode='bicubic', align_corners=False
+        )
+        return resized_frame
+
+    def load_prompt(self, data):
+        if self.config.question_type == 'mc':
+            prompt_path = 'datas/prompt/llm_only_mc.prompt'
+        elif self.config.question_type == 'oe':
+            prompt_path = 'datas/prompt/llm_only_oe.prompt'
+        else:
+            raise Exception('Invalid question type!')
+        with open(prompt_path) as f:
+            base_prompt = f.read().strip()
+
+        if isinstance(data, list):
+            if self.config.question_type == 'mc':
+                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']).format(len_options=len(d['option']), options=d['option']) for d in data]
+            elif self.config.question_type == 'oe':
+                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
+            else:
+                raise Exception('Invalid question type!')
+        else:
+            raise TypeError('data must be list of strings')
+
+        return prompt
+
+    @torch.no_grad()
+    def video_predict(self, data):
+        # convert data
+        data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+        # prepare data
+        prompt = self.load_prompt(data)
+        bound = [[min(d['frame_ids']), max(d['frame_ids']) + 1] if len(d['frame_ids']) > 0 else None for d in data]
+        video_tensors = [self.load_video_no_HD(d['video_path'], bound=b, num_segments=8, return_msg=False).to(self.model.device) for d, b in zip(data, bound)]
+        answer = []
+        for p, video_tensor in zip(prompt, video_tensors):
+            answer.append(self.model.chat(self.tokenizer, '', p, instruction=self.instruction_prompt, media_type='video', media_tensor=video_tensor, generation_config=self.generation_config))
+        return answer
+    
+    def parse(self, prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        questions = args['question']
+        require_ocr = args['require_ocr']
+        assert(step_name==self.step_name)
+        return questions, require_ocr ,output_var
+    
+    def execute(self,prog_step,inspect=False):
+        questions, require_ocr, output_var = self.parse(prog_step)
+        # initialize QA_pool. save video and image result {video: {Q, A} pair, image: {frame_id, Q, A} pair}
+        QA_pool = {'video': [], 'image': []}
+        # reasoning over video
+        if prog_step.state['is_video']:
+            QA_pool['video'] += self.video_predict(prog_step, questions)
+        if prog_step.state['is_image']:
+            QA_pool['image'] += self.image_predict(prog_step, questions)
+        prog_step.state[output_var] = QA_pool
+        return QA_pool
+
+
 class InternLM2(InternLM):
     step_name = 'internlm'
     def __init__(self, config, device=None):
@@ -917,9 +1170,15 @@ class InternLM2(InternLM):
         if prompt_type == 'stage1':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage1.prompt'
+        elif prompt_type == 'stage1_fast':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/question_phrase.prompt'
         elif prompt_type == 'stage2':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage2.prompt'
+        elif prompt_type == 'stage2_fast':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/retrieve_anchor_only.prompt'
         elif prompt_type == 'stage3':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage3.prompt'
@@ -954,7 +1213,14 @@ class InternLM2(InternLM):
                 prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
             else:
                 raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage2':
+        elif prompt_type == 'stage1_fast':
+            # convert data
+            data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+            if isinstance(data, list):
+                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
+            else:
+                raise TypeError('data must be list of strings')
+        elif prompt_type == 'stage2' or prompt_type == 'stage2_fast':
             # convert data
             data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
             if isinstance(data, list):

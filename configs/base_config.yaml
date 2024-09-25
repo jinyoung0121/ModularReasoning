@@ -29,6 +29,9 @@ internvl:
     model_name: InternVL2-8B
     max_batch_size: 6
 
+internvideo:
+    model_path: ./pretrained_model/InternVideo2-Chat-8B
+
 qd_detr:
     model_checkpoint_path: ./pretrained_model/QD_DETR/run_on_video/qd_detr_ckpt/model_best.ckpt
     clip_model: ViT-B/32
@@ -50,7 +53,8 @@ exp_name: run                                       # experiment name
 seed: 0                                             # set seed for reproducibility
 
 mode: morevqa
-question_type: mc
+vlm_type: internvl                                  # which vlm to use. internvideo, internvl, etc
+question_type: mc                                   # either mc(multiple-choice) or oe(open-ended)
 video_context: ./datas/blip2t5xxl.json
 use_video: False                                    # default: not using video info in MoReVQA
 use_image: True                                     # default: using img info in MoReVQA

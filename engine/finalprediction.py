@@ -1,10 +1,15 @@
-from .step_interpreters import VQAInterpreter, load_model, unload_model
+from .step_interpreters import VQAInterpreter, InternVideo, load_model, unload_model
 import util
 import torch.distributed as dist
 
 def FinalPrediction(config, **kwargs):
     # load model
-    model = VQAInterpreter(config, kwargs['device'])
+    if kwargs['model_type'] == 'internvideo':
+        model = InternVideo(config, kwargs['device'])
+    elif kwargs['model_type'] == 'internvl':
+        model = VQAInterpreter(config, kwargs['device'])
+    else:
+        raise Exception('Invalid model type')
     model = load_model(model, kwargs['device'], config)
     model.eval()
     # make data iterable (bsz: batch_size//log_freq)

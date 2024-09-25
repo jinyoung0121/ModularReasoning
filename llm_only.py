@@ -7,11 +7,11 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
-from engine import Program_generation, Module1, Module2, Module3
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from engine.step_interpreters import InternLM, InternLM2, load_model
 
 def main():
     mp.set_start_method('spawn')
@@ -47,12 +47,20 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
+    
+    # load model
+    if config.mode in ['llm_only', 'jcef', 'morevqa']:
+        model = InternLM(config, device=device)
+    elif config.mode in ['ours_baseline', 'ours']:
+        model = InternLM2(config, device=device)
+    model = load_model(model, device, config)
+    model.eval()
 
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
     header = '[LLM_only]'
-    for i, batch in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
+    for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
     
@@ -66,17 +74,19 @@ def main():
 
         # Final prediction (without using video context, only question)
         logging.info('Start final prediction')
-        Final_input = [{'question': question, 'option': option } \
-                                for question, option in zip(batch['query'], batch['possible_answers'])]
-        Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='llm_only')
-
+        Final_input = {'question': batch['query'], 'option': batch['possible_answers']}
+        Final_predictions = model.generate(Final_input, prompt_type='llm_only')
         # update information
         all_results += Final_predictions
         
         # compute metric
         try:
-            accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
+            accuracy, all_corrections, _ = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
             metric_logger.update(accuracy=accuracy)
+            if config.question_type == 'oe': # consider wups
+                wups0, wups9, all_wups, _, _ = dataset.report_wups(all_results, all_answers, all_possible_answers, all_query_types)
+                metric_logger.update(wups0=wups0)
+                metric_logger.update(wups9=wups9)
         except Exception as e:
             print(f'Error computing accuracy: {e}')
 
@@ -93,6 +103,8 @@ def main():
             # log information
             final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                            'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
+            if config.question_type == 'oe':
+                final_datas.update({'wups': all_wups})
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
             util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
 
@@ -102,8 +114,12 @@ def main():
 
     # compute metric
     try:
-        accuracy, all_corrections = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
+        accuracy, all_corrections, accuryacy_add = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
         metric_logger.update(accuracy=accuracy)
+        if config.question_type == 'oe': # consider wups
+            wups0, wups9, all_wups, wups0_add , wups9_add = dataset.report_wups(all_results, all_answers, all_possible_answers, all_query_types)
+            metric_logger.update(wups0=wups0)
+            metric_logger.update(wups9=wups9)
     except Exception as e:
         print(f'Error computing accuracy: {e}')
 
@@ -115,11 +131,20 @@ def main():
         if util.is_main_process():
             # log accuracy
             with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
-                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Final Accuracy : '
+                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}] Final Accuracy : '
                 f.write(header + json.dumps(metric_stats) + '\n')
+                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Detailed Accuracy : '
+                f.write(header + '\n' + json.dumps(accuryacy_add) + '\n')
+                if config.question_type == 'oe': # consider wups
+                    header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Detailed WUPS0 : '
+                    f.write(header + '\n' + json.dumps(wups0_add) + '\n')
+                    header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Detailed WUPS9 : '
+                    f.write(header + '\n' + json.dumps(wups9_add) + '\n')
         # log information
         final_datas = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'query_type': all_query_types,
                         'answer': all_answers, 'possible_answer': all_possible_answers, "result": all_results, 'correction': all_corrections}
+        if config.question_type == 'oe':
+            final_datas.update({'wups': all_wups})
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
         util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
 
