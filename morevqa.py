@@ -38,6 +38,9 @@ def main():
         results_dir = pathlib.Path(config.results_dir)
         results_dir = results_dir / config.dataset.dataset_name / config.dataset.split / config.mode / f"{config.exp_name}_{time_str}"
         results_dir.mkdir(parents=True, exist_ok=True)
+
+    config.eval_grounding = config.get('eval_grounding', False)
+    config.dataset.eval_grounding = config.eval_grounding
     
     dataset = get_dataset(config.dataset)
     if config.distributed:
@@ -59,6 +62,9 @@ def main():
     all_ids = []
     all_sample_ids = []
     all_memories = []
+    all_num_frames = []
+
+    all_timespan = []
     
     start_time = time.time()
     logging.info('Start run')
@@ -66,6 +72,7 @@ def main():
     header = '[MoReVQA]'
     for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
+        logging.info('*'* 90)
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
         
         # initialize External Memory
@@ -83,6 +90,8 @@ def main():
                                     'qa_type': '',
                                     'error': None,
                                     'VLM_answers': None,})
+            all_num_frames.append(frames.size(0))
+        
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -90,6 +99,9 @@ def main():
         all_query_types += batch['query_type']
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
+
+        if config.eval_grounding:
+            all_timespan += batch['timespan']
     
         # Module1 program generation
         logging.info('Start module1 program generation')
@@ -133,12 +145,27 @@ def main():
 
         # compute metric
         try:
+            logging.info('Start evaluating QA')
             accuracy, all_corrections, _ = dataset.accuracy(all_results, all_answers, all_possible_answers, all_query_types)
             metric_logger.update(accuracy=accuracy)
             if config.question_type == 'oe': # consider wups
                 wups0, wups9, all_wups, _, _ = dataset.report_wups(all_results, all_answers, all_possible_answers, all_query_types)
                 metric_logger.update(wups0=wups0)
                 metric_logger.update(wups9=wups9)
+            if config.eval_grounding:
+                logging.info('Start evaluating grounding')
+                ground_result = dataset.grounding(all_results, all_answers, all_possible_answers, all_query_types,
+                                                all_memories, all_timespan, all_num_frames) 
+                # return {'mIoU':mIoU, 'mIoP': mIoP, 'IoU': IoU, 'IoP':IoP, 'cnt_empty':cnt_empty, 'acc':acc}
+                metric_logger.update(acc3=ground_result['acc'][0.3])
+                metric_logger.update(acc5=ground_result['acc'][0.5])
+                metric_logger.update(mIoU=ground_result['mIoU'])
+                metric_logger.update(mIoP=ground_result['mIoP'])
+                metric_logger.update(IoU3=ground_result['IoU'][0.3])
+                metric_logger.update(IoU5=ground_result['IoU'][0.5])
+                metric_logger.update(IoP3=ground_result['IoP'][0.3])
+                metric_logger.update(IoP5=ground_result['IoP'][0.5])            
+                metric_logger.update(cnt_empty=ground_result['cnt_empty'])   
         except Exception as e:
             print(f'Error computing accuracy: {e}')
         
@@ -173,6 +200,20 @@ def main():
             wups0, wups9, all_wups, wups0_add , wups9_add = dataset.report_wups(all_results, all_answers, all_possible_answers, all_query_types)
             metric_logger.update(wups0=wups0)
             metric_logger.update(wups9=wups9)
+        if config.eval_grounding:
+            logging.info('Start evaluating grounding')
+            ground_result = dataset.grounding(all_results, all_answers, all_possible_answers, all_query_types,
+                                            all_memories, all_timespan, all_num_frames) 
+            # return {'mIoU':mIoU, 'mIoP': mIoP, 'IoU': IoU, 'IoP':IoP, 'cnt_empty':cnt_empty, 'acc':acc}
+            metric_logger.update(acc3=ground_result['acc'][0.3])
+            metric_logger.update(acc5=ground_result['acc'][0.5])
+            metric_logger.update(mIoU=ground_result['mIoU'])
+            metric_logger.update(mIoP=ground_result['mIoP'])
+            metric_logger.update(IoU3=ground_result['IoU'][0.3])
+            metric_logger.update(IoU5=ground_result['IoU'][0.5])
+            metric_logger.update(IoP3=ground_result['IoP'][0.3])
+            metric_logger.update(IoP5=ground_result['IoP'][0.5])            
+            metric_logger.update(cnt_empty=ground_result['cnt_empty'])
     except Exception as e:
         print(f'Error computing accuracy: {e}')
     

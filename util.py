@@ -310,7 +310,7 @@ def save_result(result, result_dir, filename, remove_duplicate=""):
         logging.warning("rank %d starts merging results." % get_rank())
         # combine results from all processes
         result = []
-
+    
         for rank in range(get_world_size()):
             result_file = os.path.join(
                 result_dir, "%s_rank%d.json" % (filename, rank)
@@ -326,6 +326,7 @@ def save_result(result, result_dir, filename, remove_duplicate=""):
                     id_list.append(res[remove_duplicate])
                     result_new.append(res)
             result = result_new
+
 
         # json.dump(result, open(final_result_file, "w"))
         with open(final_result_file, "w") as f:

@@ -48,6 +48,7 @@ def main():
     all_ids = []
     all_sample_ids = []
     all_memories = []
+    all_s2_prog = []
 
     start_time = time.time()
     logging.info('Start run')
@@ -100,8 +101,10 @@ def main():
         logging.info('Start stage2 processing')
         S2_input = [{'program': program, 'image': image, 'video_path': video_path}\
                         for program, image, video_path in zip(S2_programs, batch['image'], batch['video_path'])]
-        EXTERNAL_MEMORY = Stage2(config, EXTERNAL_MEMORY, data=S2_input, device=device)
+
         
+        EXTERNAL_MEMORY = Stage2(config, EXTERNAL_MEMORY, data=S2_input, device=device)
+            
         # Final prediction
         logging.info('Start final prediction')
         Final_input = [{'question': memory['question'], 'option': option, 'video_path': video_path, 'frame_ids': memory['frame_ids']}\
@@ -111,6 +114,11 @@ def main():
         # update information
         all_results += Final_predictions
         all_memories += EXTERNAL_MEMORY
+        
+        # update s2 program (RETRIEVE)
+        s2_prog_list = [i.split('\n') for i in S2_programs]
+        all_s2_prog += s2_prog_list
+        
         
         # compute metric
         try:
@@ -139,12 +147,18 @@ def main():
             if config.question_type == 'oe':
                 final_datas.update({'wups': all_wups})
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-            util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
-            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
+            util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id',)
+            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id',)
+            
+            s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 's2_prog': all_s2_prog}
+            s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
+            util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
+            
 
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
         logging.info(f'End inner run [{i + 1:>3}/{len(dataloader):>3}]\nElapsed time: {inner_total_time_str}')
+        
 
     # compute metric
     try:
@@ -180,8 +194,12 @@ def main():
         if config.question_type == 'oe':
             final_datas.update({'wups': all_wups})
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
-        util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
-        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
+        util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id',)
+        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id',)
+        
+        s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 's2_prog': all_s2_prog}
+        s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
+        util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

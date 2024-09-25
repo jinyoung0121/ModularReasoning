@@ -45,15 +45,29 @@ def save_file(obj, filename):
             json.dump(obj, fp, indent=4)
 
 
-class NExTQADataset(Dataset):
+class NExTGQADataset(Dataset):
     def __init__(self, split, data_path="", tokenize=None, max_samples=None, version='openended', fps=30,
                  max_num_frames=30, start_sample=0, **kwargs):
 
         assert version in ['openended', 'multiplechoice']
-        directory = 'nextqa' if version == 'multiplechoice' else 'nextoe'
+        
+        # directory = 'nextqa' if version == 'multiplechoice' else 'nextoe'
+        directory = '' if version == 'multiplechoice' else 'nextoe' # unlike NExT-QA, the files are within the folder
+        
+        if directory == 'nextoe':
+            raise ValueError(f"NExT-GQA open-ended not built")
+        
+        print("Loading spacy..")
+        self.nlp = spacy.load('en_core_web_lg')
+        print("Finished loading spacy..")
 
         self.split = split
         self.data_path = data_path
+        
+        # NExT-GQA shares videos with NExT-QA. If video_path not specified then read from its own dataset directory
+        video_path = kwargs.get('video_path', None)
+        self.video_path = data_path if video_path == None else video_path
+        
         self.tokenize = tokenize
         self.version = version
         self.fps = fps
@@ -71,29 +85,14 @@ class NExTQADataset(Dataset):
         self.sample_id_to_index = {sample_id: idx for idx, sample_id in enumerate(self.sample_ids)}
 
         self.video_to_dir = {}
-        for directory in os.listdir(os.path.join(self.data_path, 'videos')):
-            for video in os.listdir(os.path.join(self.data_path, 'videos', directory)):
+        for directory in os.listdir(os.path.join(self.video_path, 'videos')):
+            for video in os.listdir(os.path.join(self.video_path, 'videos', directory)):
                 self.video_to_dir[video.split('.')[0]] = directory
-        
-        print("Loading spacy..")
-        self.nlp = spacy.load('en_core_web_lg')
-        print("Finished loading spacy..")
-        
-                
-        # Evaluate NExT-QA grounding ability with respect to NExT-GQA
-        self.eval_grounding = kwargs.get('eval_grounding', False)
-        if self.eval_grounding:
-            grounding_data_path = kwargs.get('grounding_data_path', None)
-            if grounding_data_path is None:
-                raise ValueError(f"Please provide a grounding data path: dataset.grounding_data_path")
-            
-            self.grounding_data_path = grounding_data_path
-            timespan_anno_path = os.path.join(self.grounding_data_path, f'gsub_{split}.json')
-            self.timespan_anno = load_file(timespan_anno_path)
-                
-        # breakpoint()
-        # x = self.__getitem__(0)
 
+        timespan_anno_path = os.path.join(self.data_path, f'gsub_{split}.json')
+        self.timespan_anno = load_file(timespan_anno_path)
+
+    
     def get_sample_path(self, index):
         sample_id = self.sample_ids[index]
         cur_sample = self.sample_list.loc[sample_id]
@@ -123,8 +122,8 @@ class NExTQADataset(Dataset):
             question = self.tokenize(question)
         question = question + '?'
         
-        video_name = str(cur_sample['video'])
-        video_path = os.path.join(self.data_path, 'videos', self.video_to_dir[video_name], video_name + '.mp4')
+        video_name = str(cur_sample['video_id'])
+        video_path = os.path.join(self.video_path, 'videos', self.video_to_dir[video_name], video_name + '.mp4')
         video = self.get_video(video_path)
 
         if self.version == 'openended':
@@ -133,29 +132,17 @@ class NExTQADataset(Dataset):
                 answer = self.tokenize(answer)
             possible_answers = ''
         else:  # multiple choice
-            answer_idx = int(cur_sample['answer'])
             possible_answers = [str(cur_sample[f'a{i}']) for i in range(5)]
-            answer = possible_answers[answer_idx]
+            answer = cur_sample['answer']
 
         query_type = str(cur_sample['type'])
         qid = str(cur_sample['qid'])
+        timespan = self.timespan_anno[video_name]['location'][qid]
 
         out_dict = {"sample_id": sample_id, "answer": answer, "image": video, "query": question, 'pil_img': -1,
                     "query_type": query_type, 'index': idx, 'possible_answers': possible_answers,
-                    'extra_context': possible_answers, 'video_id': video_name, 'video_path': video_path}
-        
-        if self.eval_grounding:
-            # Index with (video_name, qid): NExT-QA is identical with NExT-GQA
-            # timespan = [] if the sample does not exist
-            timespan = []
-            
-            try:
-                timespan = self.timespan_anno[video_name]['location'][qid]
-            except:
-                # print(f"Timespan does not exist, {video_name}, qid: {qid}}")
-                pass
-                
-            out_dict.update({'timespan': timespan})
+                    'extra_context': possible_answers, 'video_id': video_name, 'video_path': video_path, 'timespan' : timespan}
+
         return out_dict
 
     def __len__(self):
@@ -186,12 +173,12 @@ class NExTQADataset(Dataset):
         score = 0
         corrections = []
 
-        num = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
-        num_over = {'C': 0, 'T': 0, 'D': 0}
+        num = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0}
+        num_over = {'C': 0, 'T': 0}
         num_all = 0
         # accuracy init
-        acc = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
-        acc_over = {'C': 0, 'T': 0, 'D': 0}
+        acc = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0}
+        acc_over = {'C': 0, 'T': 0}
         if self.version == 'openended':
             for p, g, qt in zip(prediction, ground_truth, query_type):
                 if qt == 'TP':
@@ -213,6 +200,7 @@ class NExTQADataset(Dataset):
             for qt in acc_over.keys():
                 acc_over[qt] = round(acc_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
         else: # multiplechoice
+            nlp = self.nlp
             for p, g, a, qt in zip(prediction, ground_truth, possible_answers, query_type):
                 if qt == 'TP':
                     qt = 'TN'
@@ -226,8 +214,8 @@ class NExTQADataset(Dataset):
                         all_answers = []
                         for pp in p:
                             if pp not in a:
-                                pred_tokens = self.nlp(pp)
-                                a.sort(key=lambda x: pred_tokens.similarity(self.nlp(x)), reverse=True)
+                                pred_tokens = nlp(pp)
+                                a.sort(key=lambda x: pred_tokens.similarity(nlp(x)), reverse=True)
                                 pp = a[0]
                             all_answers.append(pp)
                         # Majority vote
@@ -255,8 +243,8 @@ class NExTQADataset(Dataset):
                     if p is None:
                         print('None case')  # Should not happen
                     else:
-                        pred_tokens = self.nlp(p)
-                        a.sort(key=lambda x: pred_tokens.similarity(self.nlp(x)), reverse=True)
+                        pred_tokens = nlp(p)
+                        a.sort(key=lambda x: pred_tokens.similarity(nlp(x)), reverse=True)
                     p = a[0]
                 if p == g:
                     score += 1
@@ -271,55 +259,8 @@ class NExTQADataset(Dataset):
                 acc_over[qt] = round(acc_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
         # return score / len(prediction), corrections, acc
         return score / len(prediction), corrections, acc_over | acc
-
-    def report_wups(self, prediction, ground_truth, possible_answers, query_type):
-        assert len(prediction) == len(ground_truth)
-        wups = []
-        num = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
-        num_over = {'C': 0, 'T': 0, 'D': 0}
-        num_all = 0
-        # wups init
-        wups0 = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
-        wups0_over = {'C': 0, 'T': 0, 'D': 0}
-        wups9 = {'CW': 0, 'CH': 0, 'TN': 0, 'TC': 0, 'DC': 0, 'DL': 0, 'DO': 0, 'DB': 0}
-        wups9_over = {'C': 0, 'T': 0, 'D': 0}
-        wups0_all, wups9_all = 0, 0
-
-        for p, g, qt in zip(prediction, ground_truth, query_type):
-            if qt == 'TP':
-                qt = 'TN'
-            num[qt] += 1
-            num_over[qt[0]] += 1
-            num_all += 1
-            if isinstance(p, list) or isinstance(p, tuple):
-                p = p[0]  # p[1] is the info dict
-            if p is None:
-                print('None case')
-                p = 'object'  # To select some word
-            if qt == 'DC' or qt == 'DB':
-                s0 = 1 if remove_stop(p) == remove_stop(g) else 0
-                s9 = 1 if remove_stop(p) == remove_stop(g) else 0
-            else:
-                s0 = get_wups(remove_stop(p), remove_stop(g), 0)
-                s9 = get_wups(remove_stop(p), remove_stop(g), 0.9)
-            wups0[qt] += s0
-            wups9[qt] += s9
-            wups0_over[qt[0]] += s0
-            wups9_over[qt[0]] += s9
-            wups0_all += s0
-            wups9_all += s9
-            wups.append({'wups0': s0, 'wups9': s9})
-
-            
-        for qt in wups0.keys():
-            wups0[qt] = round(wups0[qt] / num[qt],4) if num[qt] > 0 else None
-            wups9[qt] = round(wups9[qt] / num[qt],4) if num[qt] > 0 else None
-        
-        for qt in wups0_over.keys():
-            wups0_over[qt] = round(wups0_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
-            wups9_over[qt] = round(wups9_over[qt] / num_over[qt],4) if num_over[qt] > 0 else None
-        return wups0_all / num_all, wups9_all / num_all, wups, wups0_over | wups0 , wups9_over | wups9
-
+    
+    
     def grounding(self, prediction, ground_truth, possible_answers, query_type, loc_prediction, loc_ground_truth, num_frames):
         """
         Args:
@@ -327,32 +268,25 @@ class NExTQADataset(Dataset):
             ground_truth (list): List of ground truth answers.
             possible_answers (list): List of possible answers.
             query_type (list): List of query types
-            loc_prediction (list): List of predicted tiemspan.
-            loc_ground_truth (list): List of ground truth timespan.
+            loc_prediction (list): List of predicted answers.
+            loc_ground_truth (list): List of ground truth answers.
             all_num_frames (list): List of num frames
         Returns:
             grounding result (dict): Result of IoU and IoP for different threshold.
         """
-        assert len(prediction) == len(ground_truth)
+
         assert len(loc_prediction) == len(loc_ground_truth)
-        assert len(prediction) == len(loc_prediction)
-        
         mIoU, mIoP = 0, 0
+        
         cnt, cnt_empty = 0, 0
         thresholds = [0.3, 0.5]
         cnt_IoU = {i:0 for i in thresholds}
         cnt_IoP = {i:0 for i in thresholds}
         acc = {i:0 for i in thresholds}
-
+        
         
         for idx, (pred, gt_locs, n_frames) in enumerate(zip(loc_prediction, loc_ground_truth, num_frames)):
             frame_ids = pred['frame_ids']
-            
-            # Skip samples that does not exist in NExT-QA but exist in NExT-GQA
-            if gt_locs == []:
-                print("Timespan does not exist")
-                # cnt_empty += 1
-                continue
             
             # For empty frame_ids, consider the entire video
             if frame_ids == []:
@@ -379,13 +313,13 @@ class NExTQADataset(Dataset):
                 cnt_IoP[thd] += (max_tIoP >= thd)
                     
                 # Compute Accuracy of the sample for QA
-                qa_score, _ = self.accuracy([prediction[idx]], [ground_truth[idx]], [possible_answers[idx]], [query_type[idx]])
+                qa_score, _, _ = self.accuracy([prediction[idx]], [ground_truth[idx]], [possible_answers[idx]], [query_type[idx]])
                 acc[thd] += (qa_score and (max_tIoP >= thd))
                 
             cnt += 1
             mIoU += max_tIoU
             mIoP += max_tIoP
-                    
+
         mIoU = mIoU / cnt
         mIoP = mIoP / cnt
         IoU = {k: v / cnt for k,v in cnt_IoU.items()}
@@ -393,10 +327,22 @@ class NExTQADataset(Dataset):
         acc = {k: v / cnt for k,v in acc.items()}
         
         return {'mIoU':mIoU, 'mIoP': mIoP, 'IoU': IoU, 'IoP':IoP, 'cnt_empty': cnt_empty, 'acc': acc}
+                
+        
+        
 
-
+# Below is code from https://github.com/doc-doc/NExT-OE/blob/main/eval_oe.py
 
 def get_tIoU(loc, span):
+    """
+    Args:
+        loc (list): Ground-truth timepan 
+        span (list): Predicted timespan 
+
+    Returns:
+        IoU (float): Intersection over Union
+        IoP (float): Intersection over Prediction 
+    """
     if span[0] == span[-1]:
         if loc[0] <= span[0] and span[0] <= loc[1]:
             return 0, 1
@@ -418,8 +364,6 @@ def get_tIoU(loc, span):
 
     return IoU, IoP
 
-
-# Below is code from https://github.com/doc-doc/NExT-OE/blob/main/eval_oe.py
 
 stopwords = "i, me, my, myself, we, our, ours, ourselves, you, you're, you've, you'll, you'd, your, yours, yourself, " \
             "yourselves, he, him, his, himself, she, she's, her, hers, herself, it, it's, its, itself, they, them, " \

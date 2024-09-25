@@ -29,7 +29,10 @@ def get_dataset(config_dataset):
         dataset = NExTQADataset(**config_dataset)
     elif dataset_name == 'ActivityNetQA':
         from datasets.activitynetqa import ActivityNetQADataset
-        dataset = ActivityNetQADataset(**config_dataset)
+        dataset = ActivityNetQADataset(**config_dataset) 
+    elif dataset_name == 'NExTGQA':
+        from datasets.nextgqa import NExTGQADataset
+        dataset = NExTGQADataset(**config_dataset)
     elif dataset_name == 'MyDataset':
         from datasets.my_dataset import MyDataset
         dataset = MyDataset(**config_dataset)
