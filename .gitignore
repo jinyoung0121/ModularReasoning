@@ -2,6 +2,6 @@ pretrained_model
 results
 datas
 *.pyc
-__pycache__
-engine/__pycache__
-datasets/__pycache__
+__pycache__/
+engine/__pycache__/
+datasets/__pycache__/

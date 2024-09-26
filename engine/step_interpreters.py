@@ -1,4 +1,5 @@
 import gc
+import os
 import torch
 import clip
 import math
@@ -775,7 +776,7 @@ class PARSEEVENTInterpreter2():
         prog_step.state[output_var] = out_value
         return out_value
 
-class RETRIEVEInterpreter(torch.nn.Module):
+class RETRIEVEInterpreterQDDETR(torch.nn.Module):
     step_name = 'retrieve'
     def __init__(self, config, device=None):
         super().__init__()
@@ -831,6 +832,82 @@ class RETRIEVEInterpreter(torch.nn.Module):
             # select top 1 prediction
             predictions = self.predictor.localize_moment(video_path=d['video_path'], query_list=[d['question']], start_idx=start_idx, end_idx=end_idx)
             temporal_windows = predictions[0]['pred_relevant_windows']
+            start_idx_new = max(start_idx, start_idx + round(temporal_windows[0][0]))
+            end_idx_new = min(end_idx, start_idx + round(temporal_windows[0][1]))
+            # update frame_id
+            frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
+            frame_ids.append(frame_id)
+        return frame_ids
+
+class RETRIEVEInterpreterUniVTG(torch.nn.Module):
+    step_name = 'retrieve'
+    def __init__(self, config, device=None):
+        super().__init__()
+        # print(f'Registering {self.step_name} step')
+        self.dev = device
+        # set video feature path
+        if config.dataset.dataset_name == 'NExTQA':
+            directory = 'nextqa' if config.dataset.version == 'multiplechoice' else 'nextoe'
+        else:
+            directory = ''
+        self.clip_vid_feat_path = os.path.join(config.dataset.data_path, directory, config.dataset.split + '_' + config.univtg.clip_vid_feat_path)
+        self.slowfast_vid_feat_path = os.path.join(config.dataset.data_path, directory, config.dataset.split + '_' + config.univtg.slowfast_vid_feat_path)
+
+        from pretrained_model.UniVTG.run_on_video.run import UniVTGPredictor
+        ckpt_path = config.univtg.model_checkpoint_path
+        clip_model_name_or_path = config.univtg.clip_model
+        self.predictor = UniVTGPredictor(ckpt_path=ckpt_path, clip_model_name_or_path=clip_model_name_or_path, device=self.dev,
+                                         clip_vid_feat_path=self.clip_vid_feat_path, slowfast_vid_feat_path=self.slowfast_vid_feat_path)
+        self.config = config
+        
+    def parse(self,prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        query = args['query']
+        assert(step_name==self.step_name)
+        return query, output_var
+    
+    def execute(self,prog_step,inspect=False):
+        query, output_var = self.parse(prog_step)
+        # initialize indicator
+        indicator = copy.deepcopy(prog_step.state['indicator'].detach())
+        # if temporal does not exist, escape
+        if torch.all(indicator==False):
+            prog_step.state[output_var] = []
+            return []
+        # initialize start and end frame id of temporal window
+        candidate_frame_ids = torch.where(indicator==True)[0].tolist()
+        start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
+        if query == '':
+            frame_id = [i for i in range(start_idx, end_idx + 1)]
+            prog_step.state[output_var] = frame_id
+            return frame_id
+        # convert video_path into vid
+        vid = str(prog_step.state['video_path'].split('/')[-1].split('.')[0])
+        # select top 1 prediction
+        predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
+        temporal_windows = predictions[0]['pred_relevant_windows']
+        # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
+        start_idx_new = max(start_idx, start_idx + round(temporal_windows[0][0]))
+        end_idx_new = min(end_idx, start_idx + round(temporal_windows[0][1]))
+        # update frame_id
+        frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
+        prog_step.state[output_var] = frame_id
+        return frame_id
+    @torch.no_grad()
+    def predict_window(self, data):
+        frame_ids = []
+        # iterate over data (video_path, question, frame_ids)
+        for d in data:
+            start_idx, end_idx = min(d['frame_ids']), max(d['frame_ids'])
+            # convert video_path into vid
+            vid = str(d['video_path'].split('/')[-1].split('.')[0])
+            # select top 1 prediction
+            predictions = self.predictor.localize_moment(vid=vid, query_list=[d['question']], start_idx=start_idx, end_idx=end_idx)
+            temporal_windows = predictions[0]['pred_relevant_windows']
+            # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
             start_idx_new = max(start_idx, start_idx + round(temporal_windows[0][0]))
             end_idx_new = min(end_idx, start_idx + round(temporal_windows[0][1]))
             # update frame_id
@@ -1305,7 +1382,7 @@ def register_step_interpreters(config, **kwargs):
     elif kwargs['mode'] == 'ours_baseline':
         # load model
         vqa_model = VQAInterpreter(config, kwargs['device'])
-        retrieve_model = RETRIEVEInterpreter(config, kwargs['device'])
+        retrieve_model = RETRIEVEInterpreterUniVTG(config, kwargs['device'])
         vqa_model = load_model(vqa_model, kwargs['device'], config)
         retrieve_model.to(kwargs['device'])
         vqa_model.eval()
@@ -1325,7 +1402,7 @@ def register_step_interpreters(config, **kwargs):
     elif kwargs['mode'] == 'ours':
         # load model
         vqa_model = VQAInterpreter2(config, kwargs['device'])
-        retrieve_model = RETRIEVEInterpreter(config, kwargs['device'])
+        retrieve_model = RETRIEVEInterpreterUniVTG(config, kwargs['device'])
         localize_model = LOCALIZEInterpreter(config, kwargs['device'])
         vqa_model = load_model(vqa_model, kwargs['device'], config)
         retrieve_model.to(kwargs['data'])

@@ -9,5 +9,5 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     dataset.start_sample 0 \
     batch_size 100 \
     log_freq 10 \
-    video_context datas/internvl_brief_allframe.json \
+    video_context datas/NExT-QA/nextqa/internvl_brief_allframe_val.json \
     mode jcef

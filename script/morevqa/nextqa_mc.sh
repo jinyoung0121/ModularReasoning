@@ -9,7 +9,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.run --nproc_per_node 4 
     dataset.start_sample 0 \
     batch_size 100 \
     log_freq 10 \
-    video_context datas/internvl_brief.json \
+    video_context datas/NExT-QA/nextqa/internvl_brief_val.json \
     is_video False \
     is_image True \
     vlm_type internvl \

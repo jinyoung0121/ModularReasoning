@@ -9,6 +9,6 @@ CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.run --nproc_per_node 2 --ma
     internlm.max_batch_size 8 \
     batch_size 5 \
     log_freq 1 \
-    video_context datas/internvl_brief.json \
+    video_context datas/ActivityNet-QA/internvl_brief.json \
     question_type oe \
     mode llm_only

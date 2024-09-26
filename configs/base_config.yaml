@@ -36,6 +36,12 @@ qd_detr:
     model_checkpoint_path: ./pretrained_model/QD_DETR/run_on_video/qd_detr_ckpt/model_best.ckpt
     clip_model: ViT-B/32
 
+univtg:
+    model_checkpoint_path: ./pretrained_model/UniVTG/results/omni/qvhl_pt/model_best.ckpt
+    clip_model: ViT-B/32
+    clip_vid_feat_path: video_clip_feats
+    slowfast_vid_feat_path: video_slowfast_feats
+
 owlvit:
     model_path: ./pretrained_model/owlvit-base-patch32
     threshold: 0.1
@@ -55,6 +61,6 @@ seed: 0                                             # set seed for reproducibili
 mode: morevqa
 vlm_type: internvl                                  # which vlm to use. internvideo, internvl, etc
 question_type: mc                                   # either mc(multiple-choice) or oe(open-ended)
-video_context: ./datas/blip2t5xxl.json
+video_context: ./datas/NExT-QA/nextqa/internvl_brief_val.json
 use_video: False                                    # default: not using video info in MoReVQA
 use_image: True                                     # default: using img info in MoReVQA
