@@ -1,5 +1,6 @@
 pretrained_model
 results
+prev_results
 datas
 *.pyc
 __pycache__/

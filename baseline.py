@@ -12,7 +12,7 @@ import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from engine.step_interpreters import VQAInterpreter, InternVideo, load_model
+from engine.step_interpreters import VQAInterpreter, InternVideo, InternLMXComposer, load_model
 
 def main():
     mp.set_start_method('spawn')
@@ -55,6 +55,8 @@ def main():
         model = InternVideo(config, device)
     elif config.vlm_type == 'internvl':
         model = VQAInterpreter(config, device)
+    elif config.vlm_type == 'internlmxcomposer':
+        model = InternLMXComposer(config, device)
     else:
         raise Exception('Invalid model type')
     model = load_model(model, device, config)

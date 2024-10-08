@@ -64,6 +64,9 @@ def main():
     all_memories = []
     all_num_frames = []
 
+    all_m3_prog = []
+    all_m2_prog = []
+    all_m1_prog = []
     all_timespan = []
     
     start_time = time.time()
@@ -113,7 +116,7 @@ def main():
         M1_input = [{'program': program} for program in M1_programs]
         EXTERNAL_MEMORY = Module1(config, EXTERNAL_MEMORY, data=M1_input, device=device)
         
-        # Stage2 program generation
+        # Module2 program generation
         logging.info('Start module2 program generation')
         M2_input = [{'event_queue': memory['event_queue'], 'conjunction': memory['conjunction'], 'image': image} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
         M2_programs = Program_generation(config, device=device, data=M2_input, prompt_type='module2')
@@ -123,7 +126,7 @@ def main():
         M2_input = [{'program': program, 'image': image} for program, image in zip(M2_programs, batch['image'])]
         EXTERNAL_MEMORY = Module2(config, EXTERNAL_MEMORY, data=M2_input, device=device)
         
-        # Stage3 program generation
+        # Module3 program generation
         logging.info('Start module3 program generation')
         M3_input = [{'question': memory['question'], 'frame_ids': memory['frame_ids'], 'require_ocr': memory['require_ocr'], 'qa_type': memory['qa_type']} for memory in EXTERNAL_MEMORY]
         M3_programs = Program_generation(config, device=device, data=M3_input, prompt_type='module3')
@@ -142,6 +145,14 @@ def main():
         # update information
         all_results += Final_predictions
         all_memories += EXTERNAL_MEMORY
+
+        # update m1, m2, m3 program (intermediate generated program)
+        m3_prog_list = [i.split('\n') for i in M3_programs]
+        m2_prog_list = [i.split('\n') for i in M2_programs]
+        m1_prog_list = [i.split('\n') for i in M1_programs]
+        all_m3_prog += m3_prog_list
+        all_m2_prog += m2_prog_list
+        all_m1_prog += m1_prog_list
 
         # compute metric
         try:
@@ -187,6 +198,18 @@ def main():
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
             util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
             util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
+
+            m1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm1_prog': all_m1_prog}
+            m1_prog_save = list(map(lambda x: dict(zip(m1_prog_save.keys(), x)), zip(*m1_prog_save.values())))
+            util.save_result(m1_prog_save, results_dir, 'm1_program', remove_duplicate='sample_id',)
+            
+            m2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm2_prog': all_m2_prog}
+            m2_prog_save = list(map(lambda x: dict(zip(m2_prog_save.keys(), x)), zip(*m2_prog_save.values())))
+            util.save_result(m2_prog_save, results_dir, 'm2_program', remove_duplicate='sample_id',)
+
+            m3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm3_prog': all_m3_prog}
+            m3_prog_save = list(map(lambda x: dict(zip(m3_prog_save.keys(), x)), zip(*m3_prog_save.values())))
+            util.save_result(m3_prog_save, results_dir, 'm3_program', remove_duplicate='sample_id',)
 
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
@@ -243,6 +266,18 @@ def main():
         util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
         util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
+        m1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm1_prog': all_m1_prog}
+        m1_prog_save = list(map(lambda x: dict(zip(m1_prog_save.keys(), x)), zip(*m1_prog_save.values())))
+        util.save_result(m1_prog_save, results_dir, 'm1_program', remove_duplicate='sample_id',)
+        
+        m2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm2_prog': all_m2_prog}
+        m2_prog_save = list(map(lambda x: dict(zip(m2_prog_save.keys(), x)), zip(*m2_prog_save.values())))
+        util.save_result(m2_prog_save, results_dir, 'm2_program', remove_duplicate='sample_id',)
+
+        m3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm3_prog': all_m3_prog}
+        m3_prog_save = list(map(lambda x: dict(zip(m3_prog_save.keys(), x)), zip(*m3_prog_save.values())))
+        util.save_result(m3_prog_save, results_dir, 'm3_program', remove_duplicate='sample_id',)
+    
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logging.info(f"End run\nElapsed time: {total_time_str}")

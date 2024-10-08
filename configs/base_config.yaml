@@ -16,8 +16,8 @@ llama:
 internlm:
     model_path: ./pretrained_model/internlm2_5-7b-chat
     max_batch_size: 3
-    max_tokens: 2048
-    do_sample: True
+    max_new_tokens: 2048
+    do_sample: False
     temperature: 0.8
     top_p: 0.8
 
@@ -26,8 +26,11 @@ blip:
 
 internvl:
     model_path: ./pretrained_model/InternVL2-8B
-    model_name: InternVL2-8B
     max_batch_size: 6
+
+internlmxcomposer:
+    model_path: ./pretrained_model/internlm-xcomposer2-vl-7b
+    max_batch_size: 10
 
 internvideo:
     model_path: ./pretrained_model/InternVideo2-Chat-8B
@@ -59,8 +62,9 @@ exp_name: run                                       # experiment name
 seed: 0                                             # set seed for reproducibility
 
 mode: morevqa
-vlm_type: internvl                                  # which vlm to use. internvideo, internvl, etc
+vlm_type: internlmxcomposer2                        # which vlm to use. internvl, internlmxcomposer, internvideo etc
+retrieve_type: univtg                               # which retrieve model to use. univtg, qddetr, etc
 question_type: mc                                   # either mc(multiple-choice) or oe(open-ended)
-video_context: ./datas/NExT-QA/nextqa/internvl_brief_val.json
+video_context: ./datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json
 use_video: False                                    # default: not using video info in MoReVQA
 use_image: True                                     # default: using img info in MoReVQA

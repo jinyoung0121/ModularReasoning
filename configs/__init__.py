@@ -92,18 +92,7 @@ def build_custom_config(args):
             custom_config[k] = v
     return dict(custom_config)
     
-
-# # The default
-# config_names = os.getenv('CONFIG_NAMES', None)
-# if config_names is None:
-#     config_names = 'my_config, config_codellama'  # Modify this if you want to use another default config
-
-# configs = [OmegaConf.load('configs/base_config.yaml')]
 configs = OmegaConf.load('configs/base_config.yaml')
-
-# if config_names is not None:
-#     for config_name in config_names.split(','):
-#         configs.append(OmegaConf.load(f'configs/{config_name.strip()}.yaml'))
 
 # unsafe_merge makes the individual configs unusable, but it is faster
 user_config = _build_opt_list(parse_args().options)

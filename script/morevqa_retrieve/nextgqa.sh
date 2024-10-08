@@ -1,6 +1,6 @@
-CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1111 ours_baseline1.py \
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1111 morevqa.py \
     --options \
-    exp_name internvl_baseline1 \
+    exp_name internvl_brief_internlm \
     dataset.dataset_name NExTGQA \
     dataset.data_path datas/NExT-GQA \
     dataset.video_path datas/NExT-QA \
@@ -8,11 +8,12 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     dataset.version multiplechoice \
     dataset.fps 1 \
     dataset.start_sample 0 \
+    dataset.max_samples 10 \
     eval_grounding True \
-    batch_size 100 \
-    log_freq 10 \
+    batch_size 10 \
+    log_freq 1 \
     video_context datas/internvl_brief.json \
     is_video False \
     is_image True \
     vlm_type internvl \
-    mode ours_baseline
+    mode morevqa

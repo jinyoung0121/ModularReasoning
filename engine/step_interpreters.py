@@ -267,7 +267,6 @@ class LOCALIZEInterpreter(torch.nn.Module):
             modifier_obj_name = modifier_var
             # update to False if object is not detected
             indicator[i] = self.predict(img, noun_obj_name, modifier_obj_name)                
-            
         prog_step.state[output_var] = indicator
         return indicator
 
@@ -291,25 +290,29 @@ class TRUNCATEInterpreter():
         truncate_option, anchor_option, output_var = self.parse(prog_step)
         prev_frame_ids = prog_step.state[anchor_option]
         if truncate_option == 'when':
-            prog_step.state['indicator'] = torch.zeros(prog_step.state['image'].size(0)).bool()
+            prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             prog_step.state['indicator'][prev_frame_ids] = True
         elif truncate_option == 'before':
             if len(prev_frame_ids) == 0: # nothing is detected in the previous step
-                prog_step.state['indicator'] = torch.zeros(prog_step.state['image'].size(0)).bool()
+                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
                 anchor_index = min(prev_frame_ids)
                 prog_step.state['indicator'][anchor_index:] = False
         elif truncate_option == 'after':
             if len(prev_frame_ids) == 0: # nothing is detected in the previous step
-                prog_step.state['indicator'] = torch.zeros(prog_step.state['image'].size(0)).bool()
+                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
                 anchor_index = max(prev_frame_ids)
                 prog_step.state['indicator'][:anchor_index+1] = False
+        # if temporal does not exist, escape
+        if torch.all(prog_step.state['indicator']==False):
+            prog_step.state[output_var] = []
+            return []
         frame_id = torch.where(prog_step.state['indicator']==True)[0].tolist()
         prog_step.state[output_var] = frame_id
         return frame_id
 
-class VQAInterpreter(torch.nn.Module):
+class InternVLInterpreter(torch.nn.Module):
     step_name = 'vqa'
     tokenizer = None
     model = None
@@ -319,12 +322,12 @@ class VQAInterpreter(torch.nn.Module):
         self.dev = device
         self.config = config
         model_id = config.internvl.model_path
-        if VQAInterpreter.tokenizer is None or VQAInterpreter.model is None:
-            VQAInterpreter.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
-            VQAInterpreter.model = AutoModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, use_flash_attn=True, trust_remote_code=True)
-            VQAInterpreter.model.eval()
-        self.tokenizer = VQAInterpreter.tokenizer
-        self.model = VQAInterpreter.model
+        if InternVLInterpreter.tokenizer is None or InternVLInterpreter.model is None:
+            InternVLInterpreter.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+            InternVLInterpreter.model = AutoModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, use_flash_attn=True, trust_remote_code=True)
+            InternVLInterpreter.model.eval()
+        self.tokenizer = InternVLInterpreter.tokenizer
+        self.model = InternVLInterpreter.model
         
         self.prompt = {'image_vqa': '<image>\n{} Answer the question shortly.',
                        'video_vqa': '{}{} Answer the question shortly.',
@@ -447,7 +450,7 @@ class VQAInterpreter(torch.nn.Module):
                 return QA_pool
             q_idxs = np.random.randint(0, len(questions), size=len(candidate_frame_ids), dtype=int).tolist()
         # iterate over images, make QA pair (batch)
-        imgs = [self.to_PIL(prog_step.state['image'][i]) for i in candidate_frame_ids]    
+        imgs = [self.to_PIL(prog_step.state['image'][i]) for i in candidate_frame_ids]
         questions = [questions[q_idx] for q_idx in q_idxs]
         answers = self.batch_predict(imgs, questions, prompt_type='image_vqa')
         for i, question, answer in zip(candidate_frame_ids, questions, answers):
@@ -506,52 +509,51 @@ class VQAInterpreter(torch.nn.Module):
                 raise Exception('Invalid question type!')
         else:
             raise TypeError('data must be list of strings')
-
         return prompt
-        
+    
     # @torch.no_grad()
     # def video_predict(self, data):
+    #     # convert data
+    #     data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+    #     # prepare data
     #     prompt = self.load_prompt(data)
-    #     # iterate over data (video_path, question, option, frame_ids)
-    #     answers = []
-    #     for p, d in zip(prompt, data):
-    #         # initialize start and end frame id of temporal window
-    #         # if temporal_window does not exist, predict answer using the entire video
-    #         if len(d['frame_ids']) == 0:
-    #             bound = None
-    #         else:
-    #             start_idx, end_idx = min(d['frame_ids']), max(d['frame_ids'])
-    #             bound = [start_idx, end_idx + 1]
+    #     bound = [[min(d['frame_ids']), max(d['frame_ids']) + 1] if len(d['frame_ids']) > 0 else None for d in data]
+    #     vids = [self.load_video(d['video_path'], bound=b, num_segments=8, max_num=1)[0].to(torch.bfloat16).to(self.dev) for d, b in zip(data, bound)]
+    #     num_patches_list = [self.load_video(d['video_path'], bound=b, num_segments=8, max_num=1)[1] for d, b in zip(data, bound)]
+    #     video_prefixs = [''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches))]) for num_patches in num_patches_list]
+    #     questions = [self.prompt['video_baseline'].format(prefix, p) for prefix, p in zip(video_prefixs, prompt)]
+    #     answer = []
+    #     for i in range(0, len(prompt), self.max_batch_size):
+    #         batch_videos = vids[i:i+self.max_batch_size]
+    #         pixel_values = torch.cat(batch_videos, dim=0)
+    #         answer += self.model.batch_chat(self.tokenizer, pixel_values,
+    #                                         questions[i:i+self.max_batch_size],
+    #                                         self.generation_config,
+    #                                         num_patches_list=num_patches_list[i:i+self.max_batch_size],
+    #                                         device=self.dev)
+    #     return answer
 
-    #         pixel_values, num_patches_list = self.load_video(d['video_path'], bound=bound, num_segments=8, max_num=1)
-    #         pixel_values = pixel_values.to(torch.bfloat16).to(self.dev)
-    #         video_prefix = ''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches_list))])
-    #         question = video_prefix + p
-    #         answer = self.model.chat(self.tokenizer, pixel_values, question, self.generation_config, num_patches_list=num_patches_list, device=self.dev)
-    #         answers.append(answer)
-    #     return answers
-    
     @torch.no_grad()
-    def video_predict(self, data):
-        # convert data
-        data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
-        # prepare data
-        prompt = self.load_prompt(data)
-        bound = [[min(d['frame_ids']), max(d['frame_ids']) + 1] if len(d['frame_ids']) > 0 else None for d in data]
-        vids = [self.load_video(d['video_path'], bound=b, num_segments=8, max_num=1)[0].to(torch.bfloat16).to(self.dev) for d, b in zip(data, bound)]
-        num_patches_list = [self.load_video(d['video_path'], bound=b, num_segments=8, max_num=1)[1] for d, b in zip(data, bound)]
-        video_prefixs = [''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches))]) for num_patches in num_patches_list]
-        questions = [self.prompt['video_baseline'].format(prefix, p) for prefix, p in zip(video_prefixs, prompt)]
-        answer = []
-        for i in range(0, len(prompt), self.max_batch_size):
-            batch_videos = vids[i:i+self.max_batch_size]
-            pixel_values = torch.cat(batch_videos, dim=0)
-            answer += self.model.batch_chat(self.tokenizer, pixel_values,
-                                            questions[i:i+self.max_batch_size],
-                                            self.generation_config,
-                                            num_patches_list=num_patches_list[i:i+self.max_batch_size],
-                                            device=self.dev)
-        return answer
+    def video_predict(self, prog_step, questions):
+        candidate_frame_ids = prog_step.state['frame_ids']
+        start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
+        # initialize QA pool. save {Q, A} pair
+        QA_pool = []
+        # initialize question
+        if isinstance(questions, str):
+            questions = [questions]
+        elif isinstance(questions, list):
+            if len(questions) == 0:
+                return QA_pool
+        pixel_values, num_patches_list = self.load_video(prog_step.state['video_path'], num_segments=8, max_num=1)
+        pixel_values = pixel_values.to(torch.bfloat16).to(self.dev)
+        video_prefix = ''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches_list))])
+        # iterate over question
+        for question in questions:
+            question = self.prompt['video_vqa'].format(video_prefix, question)
+            answer = self.model.chat(self.tokenizer, pixel_values, question, self.generation_config, num_patches_list=num_patches_list, device=self.dev)
+            QA_pool.append({'question': question, 'answer': answer})
+        return QA_pool
 
     def parse(self, prog_step):
         parse_result = parse_step(prog_step.prog_str)
@@ -568,14 +570,16 @@ class VQAInterpreter(torch.nn.Module):
         # initialize QA_pool. save video and image result {video: {Q, A} pair, image: {frame_id, Q, A} pair}
         QA_pool = {'video': [], 'image': []}
         # reasoning over video
+        # TODO: video reasoning code는 구체적으로 작성되지 않은 상태
         if prog_step.state['is_video']:
             QA_pool['video'] += self.video_predict(prog_step, questions)
+        # reasoning over image
         if prog_step.state['is_image']:
             QA_pool['image'] += self.image_predict(prog_step, questions)
         prog_step.state[output_var] = QA_pool
         return QA_pool
 
-class VERIFYACTIONInterpreter(VQAInterpreter):
+class InternVLInterpreterverify(InternVLInterpreter):
     step_name = 'verify_action'
     def __init__(self, config, device=None):
         super().__init__(config, device)
@@ -620,6 +624,172 @@ class VERIFYACTIONInterpreter(VQAInterpreter):
         prog_step.state[output_var] = frame_id
         return frame_id
 
+class InternLMXComposerInterpreter(torch.nn.Module):
+    step_name = 'vqa'
+    tokenizer = None
+    model = None
+    def __init__(self, config, device=None):
+        super().__init__()
+        # print(f'Registering {self.step_name} step')
+        self.dev = device
+        self.config = config
+        model_id = config.internlmxcomposer.model_path
+        self.model_type = model_id.split('/')[-1]
+        # TODO: internLMXComposer-4khd-7b, internLMXComposer2d5 경우에 대해서도 정상작동하는지 double-check
+        assert self.model_type in ['internlm-xcomposer2-vl-7b', 'internlm-xcomposer2-4khd-7b', 'internlm-xcomposer2d5-7b']
+        if InternLMXComposerInterpreter.tokenizer is None or InternLMXComposerInterpreter.model is None:
+            InternLMXComposerInterpreter.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+            InternLMXComposerInterpreter.model = AutoModelForCausalLM.from_pretrained(model_id, device_map='cuda', trust_remote_code=True)
+            InternLMXComposerInterpreter.model.half().eval()
+        self.tokenizer = InternLMXComposerInterpreter.tokenizer
+        self.model = InternLMXComposerInterpreter.model
+        if self.model_type in ['internlm-xcomposer2-4khd-7b', 'internlm-xcomposer2d5-7b']:
+            self.model = self.model.to(torch.bfloat16)
+        if self.model_type == 'internlm-xcomposer2d5-7b':
+            self.model.tokenizer = self.tokenizer
+
+        # self.prompt = {'image_vqa': '<ImageHere>{} Please answer the question in a few words or phrases.',
+        #                'video_vqa': '<ImageHere>{} Please answer the question in a few words or phrases.',
+        #                'verify': '<ImageHere>{} Please answer the question only yes or no.'}
+        self.prompt = {'image_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
+                       'video_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
+                       'verify': '<ImageHere>{} Please answer the question only yes or no.'}
+        self.to_PIL = transforms.ToPILImage()
+        self.max_batch_size = self.config.internlmxcomposer.max_batch_size
+
+    @ torch.no_grad()
+    def image_predict(self, prog_step, questions):
+        candidate_frame_ids = prog_step.state['frame_ids']
+        # initialize QA pool. save {frame_id, Q, A} pair
+        QA_pool = []
+        # initialize index for selecting question
+        if isinstance(questions, str):
+            questions = [questions]
+            q_idxs = np.zeros(len(candidate_frame_ids), dtype=int).tolist()
+        elif isinstance(questions, list):
+            if len(questions) == 0:
+                return QA_pool
+            q_idxs = np.random.randint(0, len(questions), size=len(candidate_frame_ids), dtype=int).tolist()
+        # iterate over images, make QA pair (batch)
+        images = [self.to_PIL(prog_step.state['image'][i]) for i in candidate_frame_ids]
+        questions = [questions[q_idx] for q_idx in q_idxs]
+        answers = self.caption_generate(images, questions, prompt_type='image_vqa')
+        for idx, question, answer in zip(candidate_frame_ids, questions, answers):
+            QA_pool.append({'frame_id': idx, 'question': question, 'answer': answer.strip('.')})
+        return QA_pool
+
+    @ torch.no_grad()
+    def caption_generate(self, images, questions, prompt_type='image_vqa'):
+        if isinstance(questions, list):
+            questions = [self.prompt[prompt_type].format(question) for question in questions]
+        else:
+            raise Exception('invalide question type')
+        torch.set_grad_enabled(False)
+        answer = []
+        # TODO: internLMXComposer2-vl 경우에 대해서만 batch inference 구현된 상태. 나머지 두 경우에 대해서도 추가
+        if self.model_type == 'internlm-xcomposer2-vl-7b':
+            # use batch inference
+            with torch.cuda.amp.autocast():
+                for i in range(0, len(images), self.max_batch_size):
+                    batch_imgs = images[i:i+self.max_batch_size]
+                    batch_questions = questions[i:i+self.max_batch_size]
+                    answer += self.model.batch_chat(self.tokenizer, query=batch_questions, image=batch_imgs, do_sample=False)[0]
+        elif self.model_type == 'internlm-xcomposer2-4khd-7b':
+            with torch.cuda.amp.autocast():
+                for image, question in zip(images, questions):
+                    answer.append(self.model.chat(self.tokenizer, query=question, image=image, hd_num=55, do_sample=False)[0])
+        elif self.model_type == 'internlm-xcomposer2d5-7b':
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                for image, question in zip(images, questions):
+                    answer.append(self.model.chat(self.tokenizer, question, [image], do_sample=False, use_meta=True, is_video=False)[0])
+        return answer
+
+    @torch.no_grad()
+    def video_predict(self, data):
+        assert self.model_type == 'internlm-xcomposer2d5-7b'
+        torch.set_grad_enabled(False)
+        # convert data
+        data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+        # prepare data
+        prompt = self.load_prompt(data)
+        bounds = [[min(d['frame_ids']), max(d['frame_ids']) + 1] if len(d['frame_ids']) > 0 else None for d in data]
+        images = [d['video_path'] for d in data]
+        questions = [p for p in prompt]
+        answer = []
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            for image, question, bound in zip(images, questions, bounds):
+                answer.append(self.model.chat(self.tokenizer, question, [image], do_sample=False, use_meta=True, is_video=True, bound=bound)[0])
+        return answer
+    
+    def parse(self, prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        questions = args['question']
+        require_ocr = args['require_ocr']
+        assert(step_name==self.step_name)
+        return questions, require_ocr ,output_var
+
+    def execute(self,prog_step,inspect=False):
+        questions, require_ocr, output_var = self.parse(prog_step)
+        # initialize QA_pool. save video and image result {video: {Q, A} pair, image: {frame_id, Q, A} pair}
+        QA_pool = {'video': [], 'image': []}
+        # reasoning over video
+        # TODO: video reasoning code는 구체적으로 작성되지 않은 상태
+        if prog_step.state['is_video']:
+            QA_pool['video'] += self.video_predict(prog_step, questions)
+        # reasoning over image
+        if prog_step.state['is_image']:
+            QA_pool['image'] += self.image_predict(prog_step, questions)
+        prog_step.state[output_var] = QA_pool
+        return QA_pool
+
+class InternLMXComposerInterpreterverify(InternLMXComposerInterpreter):
+    step_name = 'verify_action'
+    def __init__(self, config, device=None):
+        super().__init__(config, device)
+        # print(f'Registering {self.step_name} step')``
+
+    def parse(self, prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        action = args['action']
+        nouns = args['nouns']
+        return action, nouns, output_var
+    
+    def execute(self,prog_step,inspect=False):
+        action, nouns, output_var = self.parse(prog_step)
+    
+        # initialize indicator
+        indicator = copy.deepcopy(prog_step.state['indicator'].detach())
+        # update frame_id based on condition (anchor)
+        for noun in nouns:
+            # assert noun in prog_step.state.keys()
+            if noun in prog_step.state.keys():
+                indicator = indicator * prog_step.state[noun].clone().detach()
+        candidate_frame_ids = torch.where(indicator==True)[0].tolist()
+        # do not update frame_id when action=='no_action'
+        if action == 'no_action':
+            prog_step.state[output_var] = candidate_frame_ids
+            return candidate_frame_ids
+        # iterate over images, update frame_id (batch)
+        imgs = [self.to_PIL(prog_step.state['image'][i]) for i in candidate_frame_ids]
+        questions = [action] * len(imgs)
+        answers = self.caption_generate(imgs, questions, prompt_type='verify')
+        for idx, answer in zip(candidate_frame_ids, answers):
+            if 'yes' in answer.strip('.').lower():
+                indicator[idx] = True
+            elif 'no' in answer.strip('.').lower(): # 일단 'yes'가 없으면 'no'라고 가정
+                indicator[idx] = False
+            else:
+                raise Exception("Invalid answer type. Should be either 'yes' or 'no'")
+        frame_id = torch.where(indicator==True)[0].tolist()
+        prog_step.state[output_var] = frame_id
+        return frame_id
+
 class InternLM(torch.nn.Module):
     step_name = 'internlm'
     def __init__(self, config, device=None):
@@ -643,6 +813,9 @@ class InternLM(torch.nn.Module):
         elif prompt_type == 'module2':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/module2.prompt'
+        elif prompt_type == 'module2_retrieve':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/module2_spatioretrieve.prompt'
         elif prompt_type == 'module3':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/module3.prompt'
@@ -681,6 +854,15 @@ class InternLM(torch.nn.Module):
                 prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
                                     .replace('INSERT_PHRASE1_HERE', d['event_queue'][0])
                                     .replace('INSERT_PHRASE2_HERE', d['event_queue'][1]) for d in data]
+            else:
+                raise TypeError('data must be list of strings')
+        elif prompt_type == 'module2_retrieve':
+            # convert data
+            data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+            if isinstance(data, list):
+                prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
+                                    .replace('INSERT_EVENT1_HERE', d['event_queue'][0])
+                                    .replace('INSERT_EVENT2_HERE', d['event_queue'][1]) for d in data]
             else:
                 raise TypeError('data must be list of strings')
         elif prompt_type == 'module3':
@@ -722,59 +904,16 @@ class InternLM(torch.nn.Module):
     @torch.no_grad()
     def generate(self, data, prompt_type='module1'):
         prompt, additional_system_prompt = self.load_prompt(data, prompt_type)
-        if len(prompt) > self.max_batch_size:
-            response = []
-            for i in range(0, len(prompt), self.max_batch_size):
-                response += self.model.batch_chat(self.tokenizer, prompt[i: i + self.max_batch_size], additional_system_prompt=additional_system_prompt)
-            return response
-        response = self.model.batch_chat(self.tokenizer, prompt, additional_system_prompt=additional_system_prompt)
+        response = []
+        llm_batch_size = 1 if prompt_type == 'final' else self.max_batch_size
+        for i in range(0, len(prompt), llm_batch_size):
+            response += self.model.batch_chat(self.tokenizer, prompt[i: i + llm_batch_size],
+                                              max_new_tokens=self.config.internlm.max_new_tokens,
+                                              do_sample=self.config.internlm.do_sample,
+                                              temperature=self.config.internlm.temperature,
+                                              top_p=self.config.internlm.top_p,
+                                              additional_system_prompt=additional_system_prompt)
         return response
-
-### further defined interpreter ###
-class TRIMInterpreter2():
-    step_name = 'trim'
-    def __init__(self):
-        # print(f'Registering {self.step_name} step')
-        pass
-    
-    def parse(self,prog_step):
-        parse_result = parse_step(prog_step.prog_str)
-        step_name = parse_result['step_name']
-        output_var = parse_result['output_var']
-        args = parse_result['args']
-        trim_option = args['trim']
-        truncated_question = args['truncated_question']
-        assert(step_name==self.step_name)
-        return trim_option, truncated_question, output_var
-
-    def execute(self,prog_step,inspect=False):
-        trim_option, truncated_question, output_var = self.parse(prog_step)
-        out_value = {'trim': trim_option, 'truncated_question': truncated_question}
-        prog_step.state[output_var] = out_value
-        return out_value
-
-class PARSEEVENTInterpreter2():
-    step_name = 'parse_event'
-    def __init__(self):
-        # print(f'Registering {self.step_name} step')
-        pass
-
-    def parse(self,prog_step):
-        parse_result = parse_step(prog_step.prog_str)
-        step_name = parse_result['step_name']
-        output_var = parse_result['output_var']
-        args = parse_result['args']
-        conj_option = args['conj']
-        anchor_phrase = args['anchor_phrase']
-        main_phrase = args['main_phrase']
-        assert(step_name==self.step_name)
-        return conj_option, anchor_phrase, main_phrase, output_var
-
-    def execute(self,prog_step,inspect=False):
-        conj_option, anchor_phrase, main_phrase, output_var = self.parse(prog_step)
-        out_value = {'conj': conj_option, 'anchor_phrase': anchor_phrase, 'main_phrase': main_phrase}
-        prog_step.state[output_var] = out_value
-        return out_value
 
 class RETRIEVEInterpreterQDDETR(torch.nn.Module):
     step_name = 'retrieve'
@@ -841,6 +980,7 @@ class RETRIEVEInterpreterQDDETR(torch.nn.Module):
 
 class RETRIEVEInterpreterUniVTG(torch.nn.Module):
     step_name = 'retrieve'
+    predictor = None
     def __init__(self, config, device=None):
         super().__init__()
         # print(f'Registering {self.step_name} step')
@@ -853,11 +993,13 @@ class RETRIEVEInterpreterUniVTG(torch.nn.Module):
         self.clip_vid_feat_path = os.path.join(config.dataset.data_path, directory, config.dataset.split + '_' + config.univtg.clip_vid_feat_path)
         self.slowfast_vid_feat_path = os.path.join(config.dataset.data_path, directory, config.dataset.split + '_' + config.univtg.slowfast_vid_feat_path)
 
-        from pretrained_model.UniVTG.run_on_video.run import UniVTGPredictor
-        ckpt_path = config.univtg.model_checkpoint_path
-        clip_model_name_or_path = config.univtg.clip_model
-        self.predictor = UniVTGPredictor(ckpt_path=ckpt_path, clip_model_name_or_path=clip_model_name_or_path, device=self.dev,
-                                         clip_vid_feat_path=self.clip_vid_feat_path, slowfast_vid_feat_path=self.slowfast_vid_feat_path)
+        if RETRIEVEInterpreterUniVTG.predictor is None:
+            from pretrained_model.UniVTG.run_on_video.run import UniVTGPredictor
+            ckpt_path = config.univtg.model_checkpoint_path
+            clip_model_name_or_path = config.univtg.clip_model
+            RETRIEVEInterpreterUniVTG.predictor = UniVTGPredictor(config, ckpt_path=ckpt_path, clip_model_name_or_path=clip_model_name_or_path, device=self.dev,
+                                            clip_vid_feat_path=self.clip_vid_feat_path, slowfast_vid_feat_path=self.slowfast_vid_feat_path)
+        self.predictor = RETRIEVEInterpreterUniVTG.predictor
         self.config = config
         
     def parse(self,prog_step):
@@ -880,12 +1022,14 @@ class RETRIEVEInterpreterUniVTG(torch.nn.Module):
         # initialize start and end frame id of temporal window
         candidate_frame_ids = torch.where(indicator==True)[0].tolist()
         start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
-        if query == '':
+        if query == 'none':
             frame_id = [i for i in range(start_idx, end_idx + 1)]
             prog_step.state[output_var] = frame_id
             return frame_id
         # convert video_path into vid
         vid = str(prog_step.state['video_path'].split('/')[-1].split('.')[0])
+        # add punctuation at the end od the phrase, except for question
+        query = query + '.' if query[-1] != '?' else query
         # select top 1 prediction
         predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
         temporal_windows = predictions[0]['pred_relevant_windows']
@@ -896,6 +1040,7 @@ class RETRIEVEInterpreterUniVTG(torch.nn.Module):
         frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
         prog_step.state[output_var] = frame_id
         return frame_id
+    
     @torch.no_grad()
     def predict_window(self, data):
         frame_ids = []
@@ -914,76 +1059,6 @@ class RETRIEVEInterpreterUniVTG(torch.nn.Module):
             frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
             frame_ids.append(frame_id)
         return frame_ids
-
-class TRUNCATEInterpreter2():
-    step_name = 'truncate'
-    def __init__(self):
-        # print(f'Registering {self.step_name} step')
-        pass
-    
-    def parse(self,prog_step):
-        parse_result = parse_step(prog_step.prog_str)
-        step_name = parse_result['step_name']
-        output_var = parse_result['output_var']
-        args = parse_result['args']
-        conj_option = args['conj']
-        anchor_option = args['anchor']
-        assert(step_name==self.step_name)
-        return conj_option, anchor_option, output_var
-    
-    def execute(self,prog_step,inspect=False):
-        conj_option, anchor_option, output_var = self.parse(prog_step)
-        prev_frame_ids = prog_step.state[anchor_option]
-        if conj_option == 'when':
-            prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
-            prog_step.state['indicator'][prev_frame_ids] = True
-        elif conj_option == 'before':
-            if len(prev_frame_ids) == 0: # nothing is detected in the previous step
-                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
-            else:
-                anchor_index = min(prev_frame_ids)
-                prog_step.state['indicator'][anchor_index:] = False
-        elif conj_option == 'after':
-            if len(prev_frame_ids) == 0: # nothing is detected in the previous step
-                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
-            else:
-                anchor_index = max(prev_frame_ids)
-                prog_step.state['indicator'][:anchor_index+1] = False
-        # if temporal does not exist, escape
-        if torch.all(prog_step.state['indicator']==False):
-            prog_step.state[output_var] = []
-            return []
-        frame_id = torch.where(prog_step.state['indicator']==True)[0].tolist()
-        prog_step.state[output_var] = frame_id
-        return frame_id
-
-class VQAInterpreter2(VQAInterpreter):
-    step_name = 'vqa'
-    def __init__(self, config, device=None):
-        super().__init__(config, device)
-        # print(f'Registering {self.step_name} step')
-    
-    @torch.no_grad()
-    def video_predict(self, prog_step, questions):
-        candidate_frame_ids = prog_step.state['frame_ids']
-        start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
-        # initialize QA pool. save {Q, A} pair
-        QA_pool = []
-        # initialize question
-        if isinstance(questions, str):
-            questions = [questions]
-        elif isinstance(questions, list):
-            if len(questions) == 0:
-                return QA_pool
-        pixel_values, num_patches_list = self.load_video(prog_step.state['video_path'], num_segments=8, max_num=1)
-        pixel_values = pixel_values.to(torch.bfloat16).to(self.dev)
-        video_prefix = ''.join([f'Frame{i+1}: <image>\n' for i in range(len(num_patches_list))])
-        # iterate over question
-        for question in questions:
-            question = self.prompt['video_vqa'].format(video_prefix, question)
-            answer = self.model.chat(self.tokenizer, pixel_values, question, self.generation_config, num_patches_list=num_patches_list, device=self.dev)
-            QA_pool.append({'question': question, 'answer': answer})
-        return QA_pool
 
 class InternVideo(torch.nn.Module):
     step_name = 'vqa'
@@ -1237,31 +1312,138 @@ class InternVideo(torch.nn.Module):
         prog_step.state[output_var] = QA_pool
         return QA_pool
 
+### further defined interpreter ###
+class TRUNCATEInterpreter2():
+    step_name = 'truncate'
+    def __init__(self):
+        # print(f'Registering {self.step_name} step')
+        pass
+    
+    def parse(self,prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        conj_option = args['conj']
+        anchor_option = args['anchor']
+        assert(step_name==self.step_name)
+        return conj_option, anchor_option, output_var
+    
+    def execute(self,prog_step,inspect=False):
+        conj_option, anchor_option, output_var = self.parse(prog_step)
+        prev_frame_ids = prog_step.state[anchor_option]
+        if conj_option == 'when':
+            prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
+            prog_step.state['indicator'][prev_frame_ids] = True
+        elif conj_option == 'before':
+            if len(prev_frame_ids) == 0: # nothing is detected in the previous step
+                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
+            else:
+                anchor_index = min(prev_frame_ids)
+                prog_step.state['indicator'][anchor_index:] = False
+        elif conj_option == 'after':
+            if len(prev_frame_ids) == 0: # nothing is detected in the previous step
+                prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
+            else:
+                anchor_index = max(prev_frame_ids)
+                prog_step.state['indicator'][:anchor_index+1] = False
+        # if temporal does not exist, escape
+        if torch.all(prog_step.state['indicator']==False):
+            prog_step.state[output_var] = []
+            return []
+        frame_id = torch.where(prog_step.state['indicator']==True)[0].tolist()
+        prog_step.state[output_var] = frame_id
+        return frame_id
 
+class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
+    step = 'retrieve'
+    def __init__(self, config, device=None):
+        super().__init__(config, device)
+        # print(f'Registering {self.step_name} step')
+    
+    def parse(self, prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        query = args['query']
+        nouns = args['nouns']
+        return query, nouns, output_var
+    
+    def execute(self,prog_step,inspect=False):
+        query, nouns, output_var = self.parse(prog_step)
+        # initialize indicator
+        indicator = copy.deepcopy(prog_step.state['indicator'].detach())
+        # update frame_id based on condition (anchor)
+        for noun in nouns:
+            # assert noun in prog_step.state.keys()
+            if noun in prog_step.state.keys():
+                indicator = indicator * prog_step.state[noun].clone().detach()
+        # if temporal does not exist, escape
+        if torch.all(indicator==False):
+            prog_step.state[output_var] = []
+            return []
+        # initialize start and end frame id of temporal window
+        candidate_frame_ids = torch.where(indicator==True)[0].tolist()
+        # since candidate_frame_ids may noy consecutive, using min and max value to set temporal windows
+        start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
+        if query == 'none':
+            frame_id = [i for i in range(start_idx, end_idx + 1)]
+            prog_step.state[output_var] = frame_id
+            return frame_id
+        # convert video_path into vid
+        vid = str(prog_step.state['video_path'].split('/')[-1].split('.')[0])
+        # add punctuation at the end od the phrase, except for question
+        query = query + '.' if query[-1] != '?' else query
+        # select top 1 prediction
+        predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
+        temporal_windows = predictions[0]['pred_relevant_windows']
+        # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
+        start_idx_new = max(start_idx, start_idx + round(temporal_windows[0][0]))
+        end_idx_new = min(end_idx, start_idx + round(temporal_windows[0][1]))
+        # update frame_id
+        frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
+        prog_step.state[output_var] = frame_id
+        return frame_id
+    
 class InternLM2(InternLM):
     step_name = 'internlm'
     def __init__(self, config, device=None):
         super().__init__(config, device)
     
     def load_prompt(self, data, prompt_type):
-        if prompt_type == 'stage1':
+        if prompt_type == 'stage1_understanding':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/stage1_understanding.prompt'
+        elif prompt_type == 'stage1':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage1.prompt'
-        elif prompt_type == 'stage1_fast':
+        elif prompt_type == 'stage2_understanding':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/question_phrase.prompt'
+            prompt_path = 'datas/prompt/stage2_understanding.prompt'
         elif prompt_type == 'stage2':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage2.prompt'
-        elif prompt_type == 'stage2_fast':
+        elif prompt_type == 'stage3_understanding':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/retrieve_anchor_only.prompt'
+            prompt_path = 'datas/prompt/stage3_understanding.prompt'
         elif prompt_type == 'stage3':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage3.prompt'
+        elif prompt_type == 'stage4_understanding':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/stage4_understanding.prompt'
         elif prompt_type == 'stage4':
             additional_system_prompt = 'Only answer with the final answer similar to given examples.'
             prompt_path = 'datas/prompt/stage4.prompt'
+        ### 아래는 작업 중 임시로 사용하는 코드 ###
+        elif prompt_type == 'module2':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/module2_spatioretrieve.prompt' # 그냥 question으로 넣는 것 better. default: use spatioretrieve in module2
+        elif prompt_type == 'module3':
+            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+            prompt_path = 'datas/prompt/module3.prompt'
+        #############################
         elif prompt_type == 'final':
             additional_system_prompt = 'Only answer with the final answer.'
             if self.config.question_type == 'mc':
@@ -1283,42 +1465,34 @@ class InternLM2(InternLM):
         with open(prompt_path) as f:
             base_prompt = f.read().strip()
         
-        if prompt_type == 'stage1':
+        if prompt_type in ['stage1_understanding', 'stage2_understanding', 'stage3_understanding', 'stage4_understanding']:
             # convert data
             data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
             if isinstance(data, list):
                 prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
             else:
                 raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage1_fast':
+        elif prompt_type in ['stage1', 'stage2', 'srage3', 'stage4']:
             # convert data
             data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
             if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
+                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']).replace('INSERT_UNDERSTANDING_HERE', d['understanding']) for d in data]
             else:
                 raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage2' or prompt_type == 'stage2_fast':
+        elif prompt_type == 'module2':
             # convert data
             data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
             if isinstance(data, list):
                 prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
-                                    .replace('INSERT_PHRASE1_HERE', d['phrases'][0])
-                                    .replace('INSERT_PHRASE2_HERE', d['phrases'][1]) for d in data]
+                                    .replace('INSERT_EVENT1_HERE', d['event_queue'][0])
+                                    .replace('INSERT_EVENT2_HERE', d['event_queue'][1]) for d in data]
             else:
                 raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage3':
+        elif prompt_type == 'module3':
             # convert data
             data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
             if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_PHRASE_HERE', d['phrases'][1]) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage4':
-            # convert data
-            data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type'])
-                                    .replace('INSERT_QUESTION_HERE', d['question']) for d in data]
+                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
             else:
                 raise TypeError('data must be list of strings')
         elif prompt_type == 'final':
@@ -1355,10 +1529,13 @@ class InternLM2(InternLM):
         return prompt, additional_system_prompt
     
 def register_step_interpreters(config, **kwargs):
+    vqa_mapping = {'internvl': InternVLInterpreter, 'internlmxcomposer': InternLMXComposerInterpreter}
+    verify_mapping = {'internvl': InternVLInterpreterverify, 'internlmxcomposer':InternLMXComposerInterpreterverify}
+    retrieve_mapping = {'univtg': RETRIEVEInterpreterUniVTG2, 'qddetr': RETRIEVEInterpreterQDDETR} # default UniVTG is spatiotemporal (localize->retrieve)
     if kwargs['mode'] == 'morevqa':
         # load model
-        vqa_model = VQAInterpreter(config, kwargs['device'])
-        verify_model = VERIFYACTIONInterpreter(config, kwargs['device'])
+        vqa_model = vqa_mapping[config.vlm_type](config, kwargs['device'])
+        verify_model = verify_mapping[config.vlm_type](config, kwargs['device'])
         localize_model = LOCALIZEInterpreter(config, kwargs['device'])
         vqa_model = load_model(vqa_model, kwargs['device'], config)
         verify_model = load_model(verify_model, kwargs['device'], config)
@@ -1379,33 +1556,13 @@ def register_step_interpreters(config, **kwargs):
             verify_action=verify_model,
         )
         return step_interpreters, loaded_model
-    elif kwargs['mode'] == 'ours_baseline':
+    elif kwargs['mode'] in ['morevqa_retrieve', 'morevqa_understanding']:
         # load model
-        vqa_model = VQAInterpreter(config, kwargs['device'])
-        retrieve_model = RETRIEVEInterpreterUniVTG(config, kwargs['device'])
-        vqa_model = load_model(vqa_model, kwargs['device'], config)
-        retrieve_model.to(kwargs['device'])
-        vqa_model.eval()
-        retrieve_model.eval()
-        
-        loaded_model = dict(vqa=vqa_model, retrieve=retrieve_model)
-        step_interpreters = dict(
-            trim=TRIMInterpreter2(),
-            parse_event=PARSEEVENTInterpreter2(),
-            classify=CLASSIFYInterpreter(),
-            require_ocr=REQUIREOCRInterpreter(),
-            truncate=TRUNCATEInterpreter2(),
-            retrieve=retrieve_model,
-            vqa=vqa_model,
-        )
-        return step_interpreters, loaded_model
-    elif kwargs['mode'] == 'ours':
-        # load model
-        vqa_model = VQAInterpreter2(config, kwargs['device'])
-        retrieve_model = RETRIEVEInterpreterUniVTG(config, kwargs['device'])
+        vqa_model = vqa_mapping[config.vlm_type](config, kwargs['device'])
+        retrieve_model = retrieve_mapping[config.retrieve_type](config, kwargs['device'])
         localize_model = LOCALIZEInterpreter(config, kwargs['device'])
         vqa_model = load_model(vqa_model, kwargs['device'], config)
-        retrieve_model.to(kwargs['data'])
+        retrieve_model.to(kwargs['device'])
         localize_model = load_model(localize_model, kwargs['device'], config)
         vqa_model.eval()
         retrieve_model.eval()
@@ -1413,8 +1570,8 @@ def register_step_interpreters(config, **kwargs):
         
         loaded_model = dict(vqa=vqa_model, retrieve=retrieve_model, localize=localize_model)
         step_interpreters = dict(
-            trim=TRIMInterpreter2(),
-            parse_event=PARSEEVENTInterpreter2(),
+            trim=TRIMInterpreter(),
+            parse_event=PARSEEVENTInterpreter(),
             classify=CLASSIFYInterpreter(),
             require_ocr=REQUIREOCRInterpreter(),
             localize=localize_model,

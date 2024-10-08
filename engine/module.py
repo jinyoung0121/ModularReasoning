@@ -22,7 +22,7 @@ def Module1(config, EXTERNAL_MEMORY, **kwargs):
             # update 'question' and 'frame_ids' field of External Memory when trim() != 'none'
             if output_state['TRIM0']['trim'] != 'none':
                 # update 'question' field
-                EXTERNAL_MEMORY[i]['question'] = output_state['TRIM0']['truncated_question'].split('')
+                EXTERNAL_MEMORY[i]['question'] = output_state['TRIM0']['truncated_question']
                 
                 # update 'frame_ids' field
                 num_frames = int(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.4) # in paper, mentioned 'truncating 40%'
@@ -83,7 +83,7 @@ def Module2(config, EXTERNAL_MEMORY, **kwargs):
     header = '[Module2 processing]'
     # External Memory update using program execution output
     for i, data in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
-        # initalize frame_id (indicator)
+        # initiallize frame_id (indicator)
         frames = data['image'][0]
         indicator = torch.zeros(frames.size(0))
         indicator[EXTERNAL_MEMORY[i]['frame_ids']] = 1
@@ -97,8 +97,44 @@ def Module2(config, EXTERNAL_MEMORY, **kwargs):
             EXTERNAL_MEMORY[i]['frame_ids'] = []
             if EXTERNAL_MEMORY[i]['error'] == None:
                 EXTERNAL_MEMORY[i]['error'] = 'module2'
-                
 
+    metric_logger.synchronize_between_processes()
+    if util.is_dist_avail_and_initialized():
+        dist.barrier()
+    # unload model
+    loaded_model = interpreter.loaded_model
+    for step_name, model in loaded_model.items():
+        unload_model(model)
+
+    return EXTERNAL_MEMORY
+
+def Module2_retrieve(config, EXTERNAL_MEMORY, **kwargs):
+    # initial interpreter
+    interpreter = ProgramInterpreter(config, mode=config.mode, device=kwargs['device'])
+    # make data iterable (bsz: 1)
+    dataset = util.CustomDataset(kwargs['data'])
+    dataloader = util.make_loader(dataset, 1, config)
+
+    metric_logger = util.MetricLogger(delimiter='  ')
+    header = '[Module2_retrieve processing]'
+    # External Memory update using program execution output
+    for i, data in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
+        # initialize frame_id (indicator)
+        frames = data['image'][0]
+        indicator = torch.zeros(frames.size(0))
+        indicator[EXTERNAL_MEMORY[i]['frame_ids']] = 1
+        try:
+            # get output by program execution
+            final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
+                                                                                             'image': frames,
+                                                                                             'indicator': indicator.bool()},) # assume only batch 1
+            # update 'frame_ids' field
+            EXTERNAL_MEMORY[i]['frame_ids'] = output_state['RETRIEVE1']
+        except:
+            EXTERNAL_MEMORY[i]['frame_ids'] = []
+            if EXTERNAL_MEMORY[i]['error'] == None:
+                EXTERNAL_MEMORY[i]['error'] = 'module2_retrieve'
+                
     metric_logger.synchronize_between_processes()
     if util.is_dist_avail_and_initialized():
         dist.barrier()
@@ -139,7 +175,7 @@ def Module3(config, EXTERNAL_MEMORY, **kwargs):
             answers = []
             for qa in sorted_QA_pools:
                 answers.append(f"[frame{qa['frame_id']:>4}]{qa['question']}: {qa['answer']}")
-            EXTERNAL_MEMORY[i]['VLM_answer'] = '\n'.join(answers)
+            EXTERNAL_MEMORY[i]['VLM_answers'] = '\n'.join(answers)
         except:
             EXTERNAL_MEMORY[i]['frame_ids'] = []
             if EXTERNAL_MEMORY[i]['error'] == None:

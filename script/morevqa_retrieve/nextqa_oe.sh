@@ -1,6 +1,6 @@
-CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=9245 ours_baseline3.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.run --nproc_per_node 4 --master_port=9245 morevqa.py \
     --options \
-    exp_name internvl_baseline3 \
+    exp_name internvl_brief_internlm \
     dataset.dataset_name NExTQA \
     dataset.data_path datas/NExT-QA \
     dataset.split test \
@@ -13,5 +13,5 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     is_video False \
     is_image True \
     vlm_type internvl \
-    question_type oe \
-    mode ours_baseline
+    question_type mc \
+    mode morevqa

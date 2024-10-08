@@ -251,6 +251,17 @@ class NExTQADataset(Dataset):
                     p = a[3]
                 elif '(E)' in p:
                     p = a[4]
+                if len(p) == 1:
+                    if 'A' == p:
+                        p = a[0]
+                    elif 'B' == p:
+                        p = a[1]
+                    elif 'C' == p:
+                        p = a[2]
+                    elif 'D' == p:
+                        p = a[3]
+                    elif 'E' == p:
+                        p = a[4]
                 if p not in a:
                     if p is None:
                         print('None case')  # Should not happen
