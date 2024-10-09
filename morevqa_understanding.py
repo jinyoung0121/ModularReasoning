@@ -7,7 +7,7 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
-from engine import Program_generation, Understanding_generation, Module1, Module2_retrieve, Module3
+from engine import Program_generation, Understanding_generation, Stage1, Module2_retrieve, Module3
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
@@ -120,7 +120,7 @@ def main():
         # Stage1 processing then update External Memory
         logging.info('Start module1 processing')
         S1_input = [{'program': program} for program in S1_programs]
-        EXTERNAL_MEMORY = Module1(config, EXTERNAL_MEMORY, data=S1_input, device=device)
+        EXTERNAL_MEMORY = Stage1(config, EXTERNAL_MEMORY, data=S1_input, device=device)
 
         # Module2 program generation
         logging.info('Start module2 program generation')

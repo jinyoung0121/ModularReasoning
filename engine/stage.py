@@ -22,31 +22,26 @@ def Stage1(config, EXTERNAL_MEMORY, **kwargs):
             final_output, output_state = interpreter.execute(data['program'][0], init_state=None) # assume only batch 1
             # update 'question' and 'frame_ids' field of External Memory when trim() != 'none'
             if output_state['TRIM0']['trim'] != 'none':
-                EXTERNAL_MEMORY[i]['question'] = output_state['TRIM0']['truncated_question']
-            
                 # update 'frame_ids' field
                 num_frames = int(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.4) # like MoReVQA paper, mentioned 'truncating 40%'
                 if output_state['TRIM0']['trim'] == 'beginning':
                     start_idx = 0
                 elif output_state['TRIM0']['trim'] == 'middle':
-                    start_idx = math.ceil(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.3)
+                    start_idx = round(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.3)
                 elif output_state['TRIM0']['trim'] == 'end':
-                    start_idx = math.ceil(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.6)
+                    start_idx = round(len(EXTERNAL_MEMORY[i]['frame_ids'])*0.6)
                 else:
                     raise Exception('wrong trim option')
                 EXTERNAL_MEMORY[i]['frame_ids'] = [i for i in range(start_idx, start_idx + num_frames)]
             
-
             # update 'conjunction' field of External Memory
             EXTERNAL_MEMORY[i]['conjunction'] = output_state['PARSE_EVENT0']['conj']
+            
+            # update 'question' field of External Memory
+            EXTERNAL_MEMORY[i]['question'] = output_state['PARSE_EVENT0']['main_question']
                 
-            # update 'question' field
-            EXTERNAL_MEMORY[i]['question'] = output_state['PARSE_EVENT0']['main_phrase']
-                
-            # update 'phrases' field
-            anchor_phrase = output_state['PARSE_EVENT0']['anchor_phrase']
-            main_phrase = output_state['PARSE_EVENT0']['main_phrase']
-            EXTERNAL_MEMORY[i]['phrases'] = [anchor_phrase, main_phrase]
+            # update 'event_queue' field of External Memory
+            EXTERNAL_MEMORY[i]['event_queue'] = [output_state['PARSE_EVENT0']['event_to_localize'], output_state['PARSE_EVENT0']['main_question']]
             
             # update 'require_ocr' field of External Memory
             if output_state['REQUIRE_OCR0'] != 'no':
@@ -56,7 +51,7 @@ def Stage1(config, EXTERNAL_MEMORY, **kwargs):
             EXTERNAL_MEMORY[i]['qa_type'] = output_state['CLASSIFY0']
         except:
             EXTERNAL_MEMORY[i]['frame_ids'] = []
-            EXTERNAL_MEMORY[i]['phrases'] = ["", EXTERNAL_MEMORY[i]['question']]
+            EXTERNAL_MEMORY[i]['event_queue'] = ['none', EXTERNAL_MEMORY[i]['question']]
             EXTERNAL_MEMORY[i]['qa_type'] = EXTERNAL_MEMORY[i]['question'].split(' ')[0][1:]
             EXTERNAL_MEMORY[i]['error'] = 'stage1'
 

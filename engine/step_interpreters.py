@@ -1313,6 +1313,50 @@ class InternVideo(torch.nn.Module):
         return QA_pool
 
 ### further defined interpreter ###
+class TRIMInterpreter2():
+    step_name = 'trim'
+    def __init__(self):
+        # print(f'Registering {self.step_name} step')
+        pass
+    
+    def parse(self,prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        trim_option = args['trim']
+        assert(step_name==self.step_name)
+        return trim_option, output_var
+
+    def execute(self,prog_step,inspect=False):
+        trim_option, output_var = self.parse(prog_step)
+        out_value = {'trim': trim_option}
+        prog_step.state[output_var] = out_value
+        return out_value
+
+class PARSEEVENTInterpreter2():
+    step_name = 'parse_event'
+    def __init__(self):
+        # print(f'Registering {self.step_name} step')
+        pass
+
+    def parse(self,prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        conj_option = args['conj']
+        event_to_localize = args['event_to_localize']
+        main_question = args['main_question']
+        assert(step_name==self.step_name)
+        return conj_option, event_to_localize, main_question, output_var
+
+    def execute(self,prog_step,inspect=False):
+        conj_option, event_to_localize, main_question, output_var = self.parse(prog_step)
+        out_value = {'conj': conj_option, 'event_to_localize': event_to_localize, 'main_question': main_question}
+        prog_step.state[output_var] = out_value
+        return out_value
+
 class TRUNCATEInterpreter2():
     step_name = 'truncate'
     def __init__(self):
@@ -1556,7 +1600,7 @@ def register_step_interpreters(config, **kwargs):
             verify_action=verify_model,
         )
         return step_interpreters, loaded_model
-    elif kwargs['mode'] in ['morevqa_retrieve', 'morevqa_understanding']:
+    elif kwargs['mode'] == 'morevqa_retrieve':
         # load model
         vqa_model = vqa_mapping[config.vlm_type](config, kwargs['device'])
         retrieve_model = retrieve_mapping[config.retrieve_type](config, kwargs['device'])
@@ -1572,6 +1616,30 @@ def register_step_interpreters(config, **kwargs):
         step_interpreters = dict(
             trim=TRIMInterpreter(),
             parse_event=PARSEEVENTInterpreter(),
+            classify=CLASSIFYInterpreter(),
+            require_ocr=REQUIREOCRInterpreter(),
+            localize=localize_model,
+            truncate=TRUNCATEInterpreter2(),
+            retrieve=retrieve_model,
+            vqa=vqa_model,
+        )
+        return step_interpreters, loaded_model
+    elif kwargs['mode'] == 'morevqa_understanding':
+        # load mode
+        vqa_model = vqa_mapping[config.vlm_type](config, kwargs['device'])
+        retrieve_model = retrieve_mapping[config.retrieve_type](config, kwargs['device'])
+        localize_model = LOCALIZEInterpreter(config, kwargs['device'])
+        vqa_model = load_model(vqa_model, kwargs['device'], config)
+        retrieve_model.to(kwargs['device'])
+        localize_model = load_model(localize_model, kwargs['device'], config)
+        vqa_model.eval()
+        retrieve_model.eval()
+        localize_model.eval()
+        
+        loaded_model = dict(vqa=vqa_model, retrieve=retrieve_model, localize=localize_model)
+        step_interpreters = dict(
+            trim=TRIMInterpreter2(),
+            parse_event=PARSEEVENTInterpreter2(),
             classify=CLASSIFYInterpreter(),
             require_ocr=REQUIREOCRInterpreter(),
             localize=localize_model,
