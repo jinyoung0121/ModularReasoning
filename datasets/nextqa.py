@@ -59,7 +59,8 @@ class NExTQADataset(Dataset):
         self.fps = fps
         self.input_type = 'video'
         self.max_num_frames = max_num_frames
-
+        self.num_options = 5
+        
         sample_list_path = os.path.join(self.data_path, directory, f'{split}.csv')
         self.sample_list = load_file(sample_list_path)
 
@@ -134,7 +135,7 @@ class NExTQADataset(Dataset):
             possible_answers = ''
         else:  # multiple choice
             answer_idx = int(cur_sample['answer'])
-            possible_answers = [str(cur_sample[f'a{i}']) for i in range(5)]
+            possible_answers = [str(cur_sample[f'a{i}']) for i in range(self.num_options)]
             answer = possible_answers[answer_idx]
 
         query_type = str(cur_sample['type'])
@@ -238,8 +239,8 @@ class NExTQADataset(Dataset):
                         else:
                             p = c[0]
                 if p.isdigit():
-                    if int(p) > 5 or int(p) < 0:
-                        p = random.randint(1,5)
+                    if int(p) > self.num_options or int(p) < 0:
+                        p = random.randint(1,self.num_options)
                     p = a[int(p)-1]
                 if '(A)' in p:
                     p = a[0]

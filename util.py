@@ -4,6 +4,7 @@ import os
 import time
 import json
 import pathlib
+import io, tokenize
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -212,8 +213,8 @@ def load_json(path: Union[str, pathlib.Path]):
     return data
 
 def setup_seeds(args):
-    seed = args.seed + get_rank()
-
+    # seed = args.seed + get_rank()
+    seed = args.seed
     # random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -354,3 +355,20 @@ class CustomDataset(Dataset):
     
     def __getitem__(self, idx):
         return self.data[idx]
+
+def set_stage(text):
+    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    tokens = [token.string for token in tokens if token.string not in [',', '']]
+    stage_list = []
+    processing_stage = False
+    for i, token in enumerate(tokens):
+        if token == '[':
+            processing_stage = True
+        elif token == ']':
+            processing_stage = False
+            break
+        elif processing_stage:
+            assert isinstance(stage_list, list)
+            stage_list.append(token.strip('"'))
+    
+    return stage_list

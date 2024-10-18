@@ -43,6 +43,8 @@ def main():
     config.dataset.eval_grounding = config.eval_grounding
     
     dataset = get_dataset(config.dataset)
+    config.dataset.num_options = dataset.num_options
+    
     if config.distributed:
         sampler = DistributedSampler(dataset, num_replicas=util.get_world_size(), rank=util.get_rank())
     else:
@@ -108,37 +110,37 @@ def main():
     
         # Module1 program generation
         logging.info('Start module1 program generation')
-        M1_input = [{'question': memory['question']} for memory in EXTERNAL_MEMORY]
+        M1_input = [{'question': memory['question'], 'is_process': True} for memory in EXTERNAL_MEMORY]
         M1_programs = Program_generation(config, device=device, data=M1_input, prompt_type='module1')
         
         # Module1 processing then update External Memory
         logging.info('Start module1 processing')
         M1_input = [{'program': program} for program in M1_programs]
-        EXTERNAL_MEMORY = Module1(config, EXTERNAL_MEMORY, data=M1_input, device=device)
+        EXTERNAL_MEMORY = Module1(config, EXTERNAL_MEMORY, data=M1_input, stage='module1', device=device)
         
         # Module2 program generation
         logging.info('Start module2 program generation')
-        M2_input = [{'event_queue': memory['event_queue'], 'conjunction': memory['conjunction'], 'image': image} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
+        M2_input = [{'event_queue': memory['event_queue'], 'conjunction': memory['conjunction'], 'image': image, 'is_process': True} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
         M2_programs = Program_generation(config, device=device, data=M2_input, prompt_type='module2')
         
         # Module2 processing then update External Memory
         logging.info('Start module2 processing')
         M2_input = [{'program': program, 'image': image} for program, image in zip(M2_programs, batch['image'])]
-        EXTERNAL_MEMORY = Module2(config, EXTERNAL_MEMORY, data=M2_input, device=device)
+        EXTERNAL_MEMORY = Module2(config, EXTERNAL_MEMORY, data=M2_input, stage='module2', device=device)
         
         # Module3 program generation
         logging.info('Start module3 program generation')
-        M3_input = [{'question': memory['question'], 'frame_ids': memory['frame_ids'], 'require_ocr': memory['require_ocr'], 'qa_type': memory['qa_type']} for memory in EXTERNAL_MEMORY]
+        M3_input = [{'question': memory['question'], 'frame_ids': memory['frame_ids'], 'require_ocr': memory['require_ocr'], 'qa_type': memory['qa_type'], 'is_process': True} for memory in EXTERNAL_MEMORY]
         M3_programs = Program_generation(config, device=device, data=M3_input, prompt_type='module3')
         
         # Module3 processing than update External Memory
         logging.info('Start module3 processing')
         M3_input = [{'program': program, 'image': image} for program, image in zip(M3_programs, batch['image'])]
-        EXTERNAL_MEMORY = Module3(config, EXTERNAL_MEMORY, data=M3_input, device=device)
+        EXTERNAL_MEMORY = Module3(config, EXTERNAL_MEMORY, data=M3_input, stage='module3', device=device)
         
         # Final prediction
         logging.info('Start final prediction')
-        Final_input = [{'video_context': load_video_context(config, video_id, memory['VLM_answers']), 'question': question, 'option': option } \
+        Final_input = [{'video_context': load_video_context(config, video_id, memory['VLM_answers']), 'question': question, 'option': option, 'is_process': True} \
                                 for video_id, question, option, memory in zip(batch['video_id'], batch['query'], batch['possible_answers'], EXTERNAL_MEMORY)]
         Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='final')
         

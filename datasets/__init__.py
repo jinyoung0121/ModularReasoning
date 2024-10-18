@@ -27,6 +27,9 @@ def get_dataset(config_dataset):
     elif dataset_name == 'NExTQA':
         from datasets.nextqa import NExTQADataset
         dataset = NExTQADataset(**config_dataset)
+    elif dataset_name == 'STAR':
+        from datasets.star import STARDataset
+        dataset = STARDataset(**config_dataset)
     elif dataset_name == 'ActivityNetQA':
         from datasets.activitynetqa import ActivityNetQADataset
         dataset = ActivityNetQADataset(**config_dataset) 

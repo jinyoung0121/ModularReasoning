@@ -10,7 +10,5 @@ CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_nod
     batch_size 100 \
     log_freq 10 \
     video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
-    is_video False \
-    is_image True \
-    vlm_type internlmxcomposer \
+    image_vlm_type internlmxcomposer \
     mode morevqa

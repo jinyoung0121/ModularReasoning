@@ -1,7 +1,7 @@
 # spatio-temporal retrieve (localize + UniVTG, prompt1: question input to UniVTG)
-CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=9245 morevqa_understanding.py \
+CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node 6 --master_port=1245 morevqa_understanding.py \
     --options \
-    exp_name internlmxcomposer2_internlm_understanding_onlym1 \
+    exp_name s1s2s3s4_16frame \
     dataset.dataset_name NExTQA \
     dataset.data_path datas/NExT-QA \
     dataset.split val \
@@ -11,8 +11,8 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     batch_size 100 \
     log_freq 10 \
     video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
-    is_video False \
-    is_image True \
-    vlm_type internlmxcomposer \
+    image_vlm_type internlmxcomposer \
+    video_vlm_type videollava \
     retrieve_type univtg \
-    mode morevqa_understanding
+    mode morevqa_understanding \
+    frame_id_selection_num 16

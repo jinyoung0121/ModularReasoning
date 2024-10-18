@@ -29,6 +29,8 @@ def main():
         results_dir.mkdir(parents=True, exist_ok=True)
     
     dataset = get_dataset(config.dataset)
+    config.dataset.num_options = dataset.num_options
+    
     if config.distributed:
         sampler = DistributedSampler(dataset, num_replicas=util.get_world_size(), rank=util.get_rank())
     else:
@@ -49,10 +51,7 @@ def main():
     all_sample_ids = []
     
     # load model
-    if config.mode in ['llm_only', 'jcef', 'morevqa']:
-        model = InternLM(config, device=device)
-    elif config.mode in ['ours_baseline', 'ours']:
-        model = InternLM2(config, device=device)
+    model = InternLM(config, device=device)
     model = load_model(model, device, config)
     model.eval()
 
@@ -63,7 +62,7 @@ def main():
     for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
-    
+
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -75,7 +74,9 @@ def main():
         # Final prediction (without using video context, only question)
         logging.info('Start final prediction')
         Final_input = {'question': batch['query'], 'option': batch['possible_answers']}
-        Final_predictions = model.generate(Final_input, prompt_type='llm_only')
+        # convert data
+        Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
+        Final_predictions = model.generate(Final_input, prompt_type='llm_only', num_options=config.dataset.num_options)
         # update information
         all_results += Final_predictions
         

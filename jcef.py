@@ -40,6 +40,8 @@ def main():
         results_dir.mkdir(parents=True, exist_ok=True)
     
     dataset = get_dataset(config.dataset)
+    config.dataset.num_options = dataset.num_options
+    
     if config.distributed:
         sampler = DistributedSampler(dataset, num_replicas=util.get_world_size(), rank=util.get_rank())
     else:
@@ -60,10 +62,7 @@ def main():
     all_sample_ids = []
 
     # load model
-    if config.mode in ['llm_only', 'jcef', 'morevqa']:
-        model = InternLM(config, device=device)
-    elif config.mode in ['ours_baseline', 'ours']:
-        model = InternLM2(config, device=device)
+    model = InternLM(config, device=device)
     model = load_model(model, device, config)
     model.eval()
 
@@ -86,7 +85,9 @@ def main():
         # Final prediction (without using VLM answer : set to None)
         logging.info('Start final prediction')
         Final_input = {'video_context': [load_video_context(config, video_id, None) for video_id in batch['video_id']], 'question': batch['query'], 'option': batch['possible_answers']}
-        Final_predictions = model.generate(Final_input, prompt_type='final')
+        # convert data
+        Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
+        Final_predictions = model.generate(Final_input, prompt_type='final', num_options=config.dataset.num_options)
 
         # update information
         all_results += Final_predictions
@@ -163,6 +164,6 @@ def main():
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logging.info(f"End run\nElapsed time: {total_time_str}")
-        
+       
 if __name__  == '__main__':
     main()

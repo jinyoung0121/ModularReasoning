@@ -12,7 +12,7 @@ import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from engine.step_interpreters import VQAInterpreter, InternVideo, InternLMXComposer, load_model
+from engine.step_interpreters import VideoLLaVA, load_model
 
 def main():
     mp.set_start_method('spawn')
@@ -30,6 +30,8 @@ def main():
         results_dir.mkdir(parents=True, exist_ok=True)
     
     dataset = get_dataset(config.dataset)
+    config.dataset.num_options = dataset.num_options
+    
     if config.distributed:
         sampler = DistributedSampler(dataset, num_replicas=util.get_world_size(), rank=util.get_rank())
     else:
@@ -48,15 +50,10 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
-    all_memories = []
 
     # load model
-    if config.vlm_type == 'internvideo':
-        model = InternVideo(config, device)
-    elif config.vlm_type == 'internvl':
-        model = VQAInterpreter(config, device)
-    elif config.vlm_type == 'internlmxcomposer':
-        model = InternLMXComposer(config, device)
+    if config.vlm_type == 'videollava':
+        model = VideoLLaVA(config, device=device)
     else:
         raise Exception('Invalid model type')
     model = load_model(model, device, config)
@@ -81,9 +78,8 @@ def main():
         # Final prediction. Since navie VLM, pass an empty frame_ids to use the entire video as input
         logging.info('Start final prediction')
         Final_input = {'question': batch['query'], 'option': batch['possible_answers'], 'video_path': batch['video_path'], 'frame_ids': [[]] * len(batch['query'])}
-        Final_predictions = model.video_predict(Final_input)
-        
-        ### TODO: retrieve -> VLM prediction (only convert question into phrase, not parsing)
+        Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
+        Final_predictions = model.video_predict(Final_input, num_options=config.dataset.num_options)
         
         # update information
         all_results += Final_predictions
@@ -140,7 +136,7 @@ def main():
         if util.is_main_process():
             # log accuracy
             with open(os.path.join(results_dir, 'metric.txt'), mode='a', encoding='utf-8') as f:
-                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Final Accuracy : '
+                header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M")}] Final Accuracy : '
                 f.write(header + json.dumps(metric_stats) + '\n')
                 header = f'[{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")}] Detailed Accuracy : '
                 f.write(header + '\n' + json.dumps(accuryacy_add) + '\n')
