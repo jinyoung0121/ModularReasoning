@@ -15,11 +15,17 @@ llama:
 
 internlm:
     model_path: ./pretrained_model/internlm2_5-7b-chat
-    max_batch_size: 2
+    max_batch_size: 3
     max_new_tokens: 2048
     do_sample: False
     temperature: 0.8
     top_p: 0.8
+
+qwen:
+    model_path: ./pretrained_model/Qwen2.5-14B-Instruct
+    max_batch_size: 3
+    max_new_tokens: 512
+    do_sample: False
 
 blip:
     model_path: ./pretrained_model/blip2-flan-t5-xxl
@@ -57,6 +63,10 @@ videollava:
     top_p: 0.9
     temperature: 0.7
 
+viclip:
+    model_path: ./pretrained_model/ViCLIP-L-14-hf
+    topk: 15
+
 owlvit:
     model_path: ./pretrained_model/owlvit-base-patch32
     threshold: 0.1
@@ -74,6 +84,7 @@ exp_name: run                                       # experiment name
 seed: 42                                            # set seed for reproducibility
 
 mode: morevqa
+llm_type: internlm                                  # which llm to use. internvl, qwen
 image_vlm_type: internlmxcomposer                   # which vlm to use. internvl, internlmxcomposer, internvideo etc
 video_vlm_type: videollava
 retrieve_type: univtg                               # which retrieve model to use. univtg, qddetr, etc

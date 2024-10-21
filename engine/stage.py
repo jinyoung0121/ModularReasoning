@@ -40,13 +40,13 @@ def Stage1(config, EXTERNAL_MEMORY, **kwargs):
                 EXTERNAL_MEMORY[i]['conjunction'] = output_state['PARSE_EVENT0']['conj']
                 
                 # update 'question' field of External Memory
-                EXTERNAL_MEMORY[i]['question'] = output_state['PARSE_EVENT0']['main_question']
+                EXTERNAL_MEMORY[i]['question'] = output_state['PARSE_EVENT0']['independent_clause']
                     
                 # update 'event_queue' field of External Memory
-                EXTERNAL_MEMORY[i]['event_queue'] = [output_state['PARSE_EVENT0']['preceding_event'], output_state['PARSE_EVENT0']['main_question']]
+                EXTERNAL_MEMORY[i]['event_queue'] = [output_state['PARSE_EVENT0']['dependent_clause'], output_state['PARSE_EVENT0']['independent_clause']]
                 
                 # global planning을 작성하기 전에 임시로 작성
-                if output_state['PARSE_EVENT0']['preceding_event'] == 'none':
+                if output_state['PARSE_EVENT0']['dependent_clause'] == 'none':
                     EXTERNAL_MEMORY[i]['process_stage2'] = False
                 
                 # update 'require_ocr' field of External Memory
@@ -88,7 +88,8 @@ def Stage2(config, EXTERNAL_MEMORY, **kwargs):
                 # get output by program execution
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
-                                                                                                'indicator': indicator.bool()},) # assume only batch 1
+                                                                                                'indicator': indicator.bool(),
+                                                                                                'is_expand': None},) # assume only batch 1
                 # update 'anchor_frame_ids' field
                 EXTERNAL_MEMORY[i]['anchor_frame_ids'] = output_state['RETRIEVE0']
             except:
@@ -140,7 +141,8 @@ def Stage3(config, EXTERNAL_MEMORY, **kwargs):
                 # get output by program execution
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
-                                                                                                'indicator': indicator.bool()},) # assume only batch 1
+                                                                                                'indicator': indicator.bool(),
+                                                                                                'is_expand': EXTERNAL_MEMORY[i]['qa_type']},) # assume only batch 1
                 # update 'frame_ids' field
                 EXTERNAL_MEMORY[i]['frame_ids'] = output_state['RETRIEVE0']
             except:

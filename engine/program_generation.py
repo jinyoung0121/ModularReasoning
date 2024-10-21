@@ -149,6 +149,44 @@ def Understanding_generation(config, **kwargs):
     # return result
     return understandings, programs
 
+def StageProgram_generation(config, **kwargs):
+    # load model
+    if config.mode in ['jcef', 'morevqa', 'morevqa_retrieve']:
+        model = InternLM(config, device=kwargs['device'])
+    elif config.mode in ['morevqa_understanding']:
+        model = InternLM2(config, device=kwargs['device'])
+    model = load_model(model, kwargs['device'], config)
+    model.eval()
+    # make data iterable (bsz: batch_size//log_freq)
+    dataset = util.CustomDataset(kwargs['data'])
+    dataloader = util.make_loader(dataset, config.batch_size // config.log_freq, config)
+    
+    metric_logger = util.MetricLogger(delimiter='  ')
+    header = '[{} program generation]'.format(kwargs['prompt_type'])
+    # generate program
+    programs = []
+    for i, data in enumerate(metric_logger.log_every(dataloader, 1, header)):
+        # convert data
+        data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+        # select valid inputs where the input query(question) is not 'none'
+        valid_datas = [(j, d) for j, d in enumerate(data) if d['is_process']]
+        # only pass valid inputs(programs) to the model
+        valid_program = [program for _, program in valid_datas]
+        valid_outputs = model.generate(valid_program, prompt_type=kwargs['prompt_type'], num_options=config.dataset.num_options)
+        results = ['none'] * len(data)
+        for (k, _), output in zip(valid_datas, valid_outputs):
+            results[k] = output.split('Answer:\n')[1]
+        programs += results
+    
+    metric_logger.synchronize_between_processes()
+    if util.is_dist_avail_and_initialized():
+        dist.barrier()
+    # unload model
+    unload_model(model)
+    
+    # return result
+    return programs
+
 def VideoCaptioning(config, **kwargs):
     # load model
     if config.vlm_type == 'videollava':

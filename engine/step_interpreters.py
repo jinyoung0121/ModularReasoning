@@ -6,6 +6,7 @@ import math
 from torchvision import transforms
 import numpy as np
 import copy
+import cv2
 import io, tokenize
 import decord
 from decord import cpu
@@ -809,95 +810,14 @@ class InternLM(torch.nn.Module):
         self.model.eval()
         
         self.max_batch_size = self.config.internlm.max_batch_size
-    
-    def load_prompt(self, data, prompt_type, num_options=5):
-        if prompt_type == 'module1':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module1.prompt'
-        elif prompt_type == 'module2':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module2.prompt'
-        elif prompt_type == 'module2_retrieve':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module2_spatioretrieve.prompt'
-        elif prompt_type == 'module3':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module3.prompt'
-        elif prompt_type == 'final':
-            additional_system_prompt = 'Only answer with the final answer.'
-            if self.config.question_type == 'mc':
-                prompt_path = f'datas/prompt/final_prediction_mc_{str(num_options)}.prompt'
-            elif self.config.question_type == 'oe':
-                prompt_path = 'datas/prompt/final_prediction_oe.prompt'
-            else:
-                raise Exception('Invalid question type!')
-        elif prompt_type == 'llm_only':
-            additional_system_prompt = 'Only answer with the final answer.'
-            if self.config.question_type == 'mc':
-                prompt_path = f'datas/prompt/llm_only_mc_{str(num_options)}.prompt'
-            elif self.config.question_type == 'oe':
-                prompt_path = 'datas/prompt/llm_only_oe.prompt'
-            else:
-                raise Exception('Invalid question type!')
-        else:
-            raise Exception('wrong prompt type')
-        with open(prompt_path) as f:
-            base_prompt = f.read().strip()
-
-        if prompt_type == 'module1':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'module2':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
-                                    .replace('INSERT_PHRASE1_HERE', d['event_queue'][0])
-                                    .replace('INSERT_PHRASE2_HERE', d['event_queue'][1]) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'module2_retrieve':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
-                                    .replace('INSERT_EVENT1_HERE', d['event_queue'][0])
-                                    .replace('INSERT_EVENT2_HERE', d['event_queue'][1]) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'module3':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'final':
-            if isinstance(data, list):
-                if self.config.question_type == 'mc':
-                    prompt = [base_prompt.replace('INSERT_SUMMARY_HERE', d['video_context']).replace('INSERT_QUESTION_HERE', d['question']).format(len_options=len(d['option']), options=d['option']) for d in data]
-                elif self.config.question_type == 'oe':
-                    prompt = [base_prompt.replace('INSERT_SUMMARY_HERE', d['video_context']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-                else:
-                    raise Exception('Invalid question type!')
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'llm_only':
-            if isinstance(data, list):
-                if self.config.question_type == 'mc':
-                    prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']).format(len_options=len(d['option']), options=d['option']) for d in data]
-                elif self.config.question_type == 'oe':
-                    prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-                else:
-                    raise Exception('Invalid question type!')
-            else:
-                raise TypeError('data must be list of strings')
-        else:   
-            raise Exception('wrong prompt type')
-        
-        return prompt, additional_system_prompt
+        from .llm_prompt import load_baseline_llm_prompt
+        self.prompt = load_baseline_llm_prompt
     
     @torch.no_grad()
     def generate(self, data, prompt_type='module1', num_options=5):
-        prompt, additional_system_prompt = self.load_prompt(data, prompt_type, num_options=num_options)
+        prompt, additional_system_prompt = self.prompt(data, prompt_type, self.config, num_options=num_options)
         response = []
-        llm_batch_size = 1 if prompt_type == 'final' else self.max_batch_size
+        llm_batch_size = 1 if prompt_type in ['final'] else self.max_batch_size
         for i in range(0, len(prompt), llm_batch_size):
             response += self.model.batch_chat(self.tokenizer, prompt[i: i + llm_batch_size],
                                               max_new_tokens=self.config.internlm.max_new_tokens,
@@ -1341,14 +1261,14 @@ class PARSEEVENTInterpreter2():
         output_var = parse_result['output_var']
         args = parse_result['args']
         conj_option = args['conj']
-        preceding_event = args['preceding_event']
-        main_question = args['main_question']
+        dependent_clause = args['dependent_clause']
+        independent_clause = args['independent_clause']
         assert(step_name==self.step_name)
-        return conj_option, preceding_event, main_question, output_var
+        return conj_option, dependent_clause, independent_clause, output_var
 
     def execute(self,prog_step,inspect=False):
-        conj_option, preceding_event, main_question, output_var = self.parse(prog_step)
-        out_value = {'conj': conj_option, 'preceding_event': preceding_event, 'main_question': main_question}
+        conj_option, dependent_clause, independent_clause, output_var = self.parse(prog_step)
+        out_value = {'conj': conj_option, 'dependent_clause': dependent_clause, 'independent_clause': independent_clause}
         prog_step.state[output_var] = out_value
         return out_value
 
@@ -1356,7 +1276,88 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
     step = 'retrieve'
     def __init__(self, config, device=None):
         super().__init__(config, device)
-        # print(f'Registering {self.step_name} step')
+        
+        retrieveclip_model_id = config.viclip.model_path
+        self.retrieveclip_model = AutoModel.from_pretrained(retrieveclip_model_id,trust_remote_code=True)
+        self.retrieveclip_tokenizer = self.retrieveclip_model.tokenizer
+        self.retrieveclip_model_tokenizer = {"viclip": self.retrieveclip_model,"tokenizer": self.retrieveclip_tokenizer}
+        
+        self.topk = config.viclip.topk
+    
+    def _frame_from_video(self, video):
+        while video.isOpened():
+            success, frame = video.read()
+            if success:
+                yield frame
+            else:
+                break
+    
+    def load_video(self, video_path):
+        vr = decord.VideoReader(video_path, num_threads=1, ctx=cpu(0))
+        max_frame = len(vr)
+        fps = float(vr.get_avg_fps())
+        # frames = np.stack([vr[idx].asnumpy() for idx in range(max_frame)])
+        frames = [cv2.cvtColor(vr[idx].asnumpy(), cv2.COLOR_RGB2BGR) for idx in range(max_frame)]
+        return frames, fps
+    
+    def get_vid_feat(self, frames, clip):
+        return clip.get_vid_features(frames)
+    
+    def get_text_feat(self, text, clip, tokenizer):
+        return clip.get_text_features(text, tokenizer)
+
+    def normalize(self, data):
+        v_mean = np.array([0.485, 0.456, 0.406]).reshape(1,1,3)
+        v_std = np.array([0.229, 0.224, 0.225]).reshape(1,1,3)
+        return (data/255.0-v_mean)/v_std
+
+    def frames2tensor(self, vid_list, bound=None, fps=None, fnum=8, target_size=(224, 224), device=None):
+        assert(len(vid_list) >= fnum)
+        assert fps
+        if bound:
+            s_idx, e_idx = round(bound[0] * fps), round(bound[1] * fps)
+            step = (e_idx - s_idx) // fnum
+        else:
+            s_idx, e_idx = 0, len(vid_list)
+            step = len(vid_list) // fnum
+        # vid_list = vid_list[::step][:fnum]
+        vid_list = vid_list[s_idx:e_idx:step][:fnum]
+        vid_list = [cv2.resize(x[:,:,::-1], target_size) for x in vid_list]
+        vid_tube = [np.expand_dims(self.normalize(x), axis=(0, 1)) for x in vid_list]
+        vid_tube = np.concatenate(vid_tube, axis=1)
+        vid_tube = np.transpose(vid_tube, (0, 1, 4, 2, 3))
+        vid_tube = torch.from_numpy(vid_tube).to(device, non_blocking=True).float()
+        return vid_tube
+    
+    def retrieve_clip(self, frames, text, windows=None, models={'viclip':None, 'tokenizer':None}, topk=15, fps=None, device=None):
+        assert(type(models)==dict and models['viclip'] is not None and models['tokenizer'] is not None)
+        assert fps
+        clip_model, clip_tokenizer =  models['viclip'], models['tokenizer']
+        clip_model = clip_model.to(device)
+        
+        # visual feature
+        vid_feats = []
+        for idx, window in enumerate(windows[:topk]):
+            bound = window[:2]
+            frames_tensor = self.frames2tensor(frames, bound=bound, fps=fps, device=device)
+            vid_feats.append(self.get_vid_feat(frames_tensor, clip_model))
+        vid_feats_tensor = torch.cat(vid_feats, 0)
+        # text feature
+        text_feat = self.get_text_feat(text, clip_model, clip_tokenizer)
+        # window ranking
+        probs, idxs = clip_model.get_predict_label(text_feat, vid_feats_tensor, top=topk)
+        return probs, idxs
+    
+    def ranking_window(self, video_path, windows=None, text=''):
+        assert windows and text != '','only pass if windows and text exist'
+        # extract video information
+        frames, fps = self.load_video(video_path)
+        # ranking temporal windows
+        probs, idxs = self.retrieve_clip(frames, text, windows=windows, models=self.retrieveclip_model_tokenizer, topk=self.topk, fps=fps, device=self.dev)
+        probs = probs.flatten().detach()
+        idxs = idxs.flatten().detach()
+        ranked_windows = [windows[idx] for idx in idxs]
+        return ranked_windows
     
     def parse(self, prog_step):
         parse_result = parse_step(prog_step.prog_str)
@@ -1376,7 +1377,7 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         for noun in nouns:
             # assert noun in prog_step.state.keys()
             if noun in prog_step.state.keys():
-                indicator = indicator * prog_step.state[noun].clone().detach()
+                indicator = indicator | prog_step.state[noun].clone().detach()
         # if temporal does not exist, escape
         if torch.all(indicator==False):
             prog_step.state[output_var] = []
@@ -1390,16 +1391,20 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
             prog_step.state[output_var] = frame_id
             return frame_id
         # convert video_path into vid
-        vid = str(prog_step.state['video_path'].split('/')[-1].split('.')[0])
+        video_path = prog_step.state['video_path']
+        vid = str(video_path.split('/')[-1].split('.')[0])
         # add punctuation at the end od the phrase, except for question
         query = query if query[-1] in ['?', '.'] else query + '.'
-        # select top 1 prediction
+        # temporal grounding prediction
         predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
         temporal_windows = predictions[0]['pred_relevant_windows']
+        # ranking prediction
+        temporal_windows = self.ranking_window(video_path, windows=temporal_windows, text=query)
         # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
         s_idx, e_idx = round(temporal_windows[0][0]), round(temporal_windows[0][1])
         # when temporal expansion is required, update the start_idx (s_idx) and end_idx (e_idx)
-        if is_expand == 'TRUE':
+        # if is_expand == 'TRUE':
+        if prog_step.state['qa_type'] == 'reasoning':
             c_idx = (s_idx + e_idx) / 2
             t_win_len = e_idx - s_idx
             expanded_t_win_len = t_win_len * self.config.window_expand_ratio
@@ -1547,125 +1552,58 @@ class InternLM2(InternLM):
     step_name = 'internlm'
     def __init__(self, config, device=None):
         super().__init__(config, device)
-    
-    def load_prompt(self, data, prompt_type, num_options=5):
-        if prompt_type == 'planning':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/planning_global.prompt'
-        elif prompt_type == 'stage1_understanding':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage1_understanding.prompt'
-        elif prompt_type == 'stage1':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage1.prompt'
-        elif prompt_type == 'stage2_understanding':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage2_understanding.prompt'
-        elif prompt_type == 'stage2':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage2.prompt'
-        elif prompt_type == 'stage3_understanding':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage3_understanding.prompt'
-        elif prompt_type == 'stage3':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage3.prompt'
-        elif prompt_type == 'stage4_understanding':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage4_understanding.prompt'
-        elif prompt_type == 'stage4':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/stage4.prompt'
-        ### 아래는 작업 중 임시로 사용하는 코드 ###
-        elif prompt_type == 'module2':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module2_spatioretrieve.prompt' # 그냥 question으로 넣는 것 better. default: use spatioretrieve in module2
-        elif prompt_type == 'module3':
-            additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-            prompt_path = 'datas/prompt/module3.prompt'
-        #############################
-        elif prompt_type == 'final':
-            additional_system_prompt = 'Only answer with the final answer.'
-            if self.config.question_type == 'mc':
-                prompt_path = f'datas/prompt/final_prediction_mc_{str(num_options)}.prompt'
-            elif self.config.question_type == 'oe':
-                prompt_path = 'datas/prompt/final_prediction_oe.prompt'
-            else:
-                raise Exception('Invalid question type!')
-        elif prompt_type == 'llm_only':
-            additional_system_prompt = 'Only answer with the final answer.'
-            if self.config.question_type == 'mc':
-                prompt_path = f'datas/prompt/llm_only_mc_{str(num_options)}.prompt'
-            elif self.config.question_type == 'oe':
-                prompt_path = 'datas/prompt/llm_only_oe.prompt'
-            else:
-                raise Exception('Invalid question type!')
-        else:
-            raise Exception('wrong prompt type')
-        with open(prompt_path) as f:
-            base_prompt = f.read().strip()
+        from .llm_prompt import load_llm_prompt
+        self.prompt = load_llm_prompt
+
+class Qwen(torch.nn.Module):
+    step_name = 'qwen'
+    def __init__(self, config, device=None):
+        super().__init__()
+        # print(f'Registering {self.step_name} step')
+        self.dev = device
         
-        if prompt_type in ['planning', 'stage1_understanding', 'stage2_understanding', 'stage3_understanding']:
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage4_understanding':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type in ['stage1', 'stage2', 'stage3', 'stage4']:
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']).replace('INSERT_UNDERSTANDING_HERE', d['understanding']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'stage4':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']).replace('INSERT_UNDERSTANDING_HERE', d['understanding']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'module2':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_CONJUNCTION_HERE', d['conjunction'])
-                                    .replace('INSERT_EVENT1_HERE', d['event_queue'][0])
-                                    .replace('INSERT_EVENT2_HERE', d['event_queue'][1]) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'module3':
-            if isinstance(data, list):
-                prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'final':
-            if isinstance(data, list):
-                if self.config.question_type == 'mc':
-                    prompt = [base_prompt.replace('INSERT_SUMMARY_HERE', d['video_context'])
-                                        .replace('INSERT_QUESTION_HERE', d['question'])
-                                        .format(len_options=len(d['option']), options=d['option']) for d in data]
-                elif self.config.question_type == 'oe':
-                    prompt = [base_prompt.replace('INSERT_SUMMARY_HERE', d['video_context'])
-                                        .replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-                else:
-                    raise Exception('Invalid question type!')
-            else:
-                raise TypeError('data must be list of strings')
-        elif prompt_type == 'llm_only':
-            if isinstance(data, list):
-                if self.config.question_type == 'mc':
-                    prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question'])
-                                        .format(len_options=len(d['option']), options=d['option']) for d in data]
-                elif self.config.question_type == 'oe':
-                    prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
-                else:
-                    raise Exception("Invalid question type!")
-            else:
-                raise TypeError('data must be list of strings')
-        else:   
-            raise Exception('wrong prompt type')
-        
-        return prompt, additional_system_prompt
+        self.config = config
+        model_id = config.qwen.model_path
+        self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        self.tokenizer.padding_side = 'left'
+        self.model.to(self.dev)
+        self.model.eval()
+
+        self.max_batch_size = self.config.qwen.max_batch_size
+        self.max_new_tokens = self.config.qwen.max_new_tokens
+        self.do_sample = self.config.qwen.do_sample
+        from .llm_prompt import load_llm_prompt
+        self.prompt = load_llm_prompt
     
+    def prepare_input(self, datas, additional_system_prompt=None):
+        texts = []
+        system_prompt = "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+        if additional_system_prompt:
+            system_prompt = system_prompt + ' ' + additional_system_prompt
+        for data in datas:
+            text = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": data}
+            ]
+            texts.append(text)
+        return texts
+    
+    @torch.no_grad()
+    def generate(self, data, prompt_type='module1', num_options=5):
+        prompt, additional_system_prompt = self.prompt(data, prompt_type, self.config, num_options=num_options)
+        prompt = self.prepare_input(prompt, additional_system_prompt=additional_system_prompt)
+        response = []
+        llm_batch_size = 1 if prompt_type in ['final'] else self.max_batch_size
+        for i in range(0, len(prompt), llm_batch_size):
+            batched_prompt = prompt[i: i + llm_batch_size]
+            batched_input = self.tokenizer.apply_chat_template(batched_prompt, tokenize=False, add_generation_prompt=True)
+            model_inputs = self.tokenizer(batched_input, return_tensors="pt", padding=True).to(self.dev)
+            generated_ids = self.model.generate(**model_inputs, max_new_tokens=self.max_new_tokens, do_sample=self.do_sample)
+            generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
+            response += self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        return response
+
 def register_step_interpreters(config, **kwargs):
     # vqa_mapping = {'internvl': InternVLInterpreter, 'internlmxcomposer': InternLMXComposerInterpreter, 'videollava': VideoLLaVA}
     # verify_mapping = {'internvl': InternVLInterpreterverify, 'internlmxcomposer':InternLMXComposerInterpreterverify}

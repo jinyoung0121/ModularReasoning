@@ -11,7 +11,7 @@ import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from engine.step_interpreters import InternLM, InternLM2, load_model
+from engine.step_interpreters import InternLM, InternLM2, Qwen, load_model
 
 def main():
     mp.set_start_method('spawn')
@@ -49,10 +49,15 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
-    
+
     # load model
-    model = InternLM(config, device=device)
-    model = load_model(model, device, config)
+    if config.llm_type == 'internlm':
+        model = InternLM(config, device=device)
+        model = load_model(model, device, config)
+    elif config.llm_type == 'qwen':
+        model = Qwen(config, device=device)
+    else:
+        raise Exception('Invalid LLM type')
     model.eval()
 
     start_time = time.time()
@@ -77,6 +82,7 @@ def main():
         # convert data
         Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
         Final_predictions = model.generate(Final_input, prompt_type='llm_only', num_options=config.dataset.num_options)
+        import pdb; pdb.set_trace(10)
         # update information
         all_results += Final_predictions
         
