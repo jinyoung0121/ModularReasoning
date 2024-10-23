@@ -810,8 +810,12 @@ class InternLM(torch.nn.Module):
         self.model.eval()
         
         self.max_batch_size = self.config.internlm.max_batch_size
-        from .llm_prompt import load_baseline_llm_prompt
-        self.prompt = load_baseline_llm_prompt
+        if config.mode in ['jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
+            from .llm_prompt import load_baseline_llm_prompt
+            self.prompt = load_baseline_llm_prompt
+        elif config.mode in ['morevqa_understanding']:
+            from .llm_prompt import load_llm_prompt
+            self.prompt = load_llm_prompt
     
     @torch.no_grad()
     def generate(self, data, prompt_type='module1', num_options=5):
@@ -1315,13 +1319,18 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         assert(len(vid_list) >= fnum)
         assert fps
         if bound:
-            s_idx, e_idx = round(bound[0] * fps), round(bound[1] * fps)
+            s_idx, e_idx = round(bound[0] * fps), round(bound[1] * fps) + 1
             step = (e_idx - s_idx) // fnum
         else:
             s_idx, e_idx = 0, len(vid_list)
             step = len(vid_list) // fnum
         # vid_list = vid_list[::step][:fnum]
-        vid_list = vid_list[s_idx:e_idx:step][:fnum]
+        # if step==0, it means # of frames are lower than f_num, therefore pad with first frame
+        if step == 0:
+            pad_num = fnum-(e_idx - s_idx)
+            vid_list = [vid_list[s_idx] for _ in range(pad_num)] + vid_list[s_idx:e_idx]
+        else:
+            vid_list = vid_list[s_idx:e_idx:step][:fnum]
         vid_list = [cv2.resize(x[:,:,::-1], target_size) for x in vid_list]
         vid_tube = [np.expand_dims(self.normalize(x), axis=(0, 1)) for x in vid_list]
         vid_tube = np.concatenate(vid_tube, axis=1)
@@ -1329,35 +1338,43 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         vid_tube = torch.from_numpy(vid_tube).to(device, non_blocking=True).float()
         return vid_tube
     
-    def retrieve_clip(self, frames, text, windows=None, models={'viclip':None, 'tokenizer':None}, topk=15, fps=None, device=None):
+    def retrieve_clip(self, frames, text, windows=None, models={'viclip':None, 'tokenizer':None}, topk=15, start_idx=None, end_idx=None, fps=None, device=None):
         assert(type(models)==dict and models['viclip'] is not None and models['tokenizer'] is not None)
         assert fps
         clip_model, clip_tokenizer =  models['viclip'], models['tokenizer']
         clip_model = clip_model.to(device)
-        
         # visual feature
         vid_feats = []
+        confid_score = []
         for idx, window in enumerate(windows[:topk]):
-            bound = window[:2]
-            frames_tensor = self.frames2tensor(frames, bound=bound, fps=fps, device=device)
+            s_idx = max(start_idx, start_idx + window[0])
+            e_idx = min(end_idx, start_idx + window[1])
+            confid_score.append(window[2])
+            frames_tensor = self.frames2tensor(frames, bound=[s_idx, e_idx], fps=fps, device=device)
             vid_feats.append(self.get_vid_feat(frames_tensor, clip_model))
         vid_feats_tensor = torch.cat(vid_feats, 0)
+        confid_score = torch.tensor(confid_score)
         # text feature
         text_feat = self.get_text_feat(text, clip_model, clip_tokenizer)
         # window ranking
         probs, idxs = clip_model.get_predict_label(text_feat, vid_feats_tensor, top=topk)
-        return probs, idxs
+        probs = probs.flatten().detach()
+        idxs = idxs.flatten().detach()
+        return confid_score, probs, idxs
     
-    def ranking_window(self, video_path, windows=None, text=''):
+    def ranking_window(self, video_path, windows=None, text='', topk=5, start_idx=None, end_idx=None):
         assert windows and text != '','only pass if windows and text exist'
         # extract video information
         frames, fps = self.load_video(video_path)
         # ranking temporal windows
-        probs, idxs = self.retrieve_clip(frames, text, windows=windows, models=self.retrieveclip_model_tokenizer, topk=self.topk, fps=fps, device=self.dev)
-        probs = probs.flatten().detach()
-        idxs = idxs.flatten().detach()
-        ranked_windows = [windows[idx] for idx in idxs]
-        return ranked_windows
+        confid, probs, idxs = self.retrieve_clip(frames, text, windows=windows, models=self.retrieveclip_model_tokenizer, topk=topk, start_idx=start_idx, end_idx=end_idx, fps=fps, device=self.dev)
+        # ranked_windows = [windows[idx] for idx in idxs]
+        clip_score = torch.zeros_like(probs)
+        clip_score = clip_score.scatter(0, idxs, probs)
+        clip_score = confid*clip_score
+        top1_idx = torch.argmax(clip_score).item()
+        top1_window = windows[top1_idx]
+        return top1_window
     
     def parse(self, prog_step):
         parse_result = parse_step(prog_step.prog_str)
@@ -1399,7 +1416,8 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
         temporal_windows = predictions[0]['pred_relevant_windows']
         # ranking prediction
-        temporal_windows = self.ranking_window(video_path, windows=temporal_windows, text=query)
+        rank_k = min(self.topk, len(temporal_windows))
+        temporal_windows = self.ranking_window(video_path, windows=temporal_windows, text=query, topk=rank_k, start_idx=start_idx, end_idx=end_idx)
         # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
         s_idx, e_idx = round(temporal_windows[0][0]), round(temporal_windows[0][1])
         # when temporal expansion is required, update the start_idx (s_idx) and end_idx (e_idx)
@@ -1547,13 +1565,6 @@ class VideoLLaVA(torch.nn.Module):
         QA_pool += self.video_predict(prog_step, questions)
         prog_step.state[output_var] = QA_pool
         return QA_pool
-        
-class InternLM2(InternLM):
-    step_name = 'internlm'
-    def __init__(self, config, device=None):
-        super().__init__(config, device)
-        from .llm_prompt import load_llm_prompt
-        self.prompt = load_llm_prompt
 
 class Qwen(torch.nn.Module):
     step_name = 'qwen'
@@ -1563,7 +1574,8 @@ class Qwen(torch.nn.Module):
         self.dev = device
         
         self.config = config
-        model_id = config.qwen.model_path
+        model_path = {'7b': config.qwen.model_path_7b, '14b': config.qwen.model_path_14b}
+        model_id = model_path[config.qwen.model_size]
         self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
         self.tokenizer.padding_side = 'left'
@@ -1573,8 +1585,12 @@ class Qwen(torch.nn.Module):
         self.max_batch_size = self.config.qwen.max_batch_size
         self.max_new_tokens = self.config.qwen.max_new_tokens
         self.do_sample = self.config.qwen.do_sample
-        from .llm_prompt import load_llm_prompt
-        self.prompt = load_llm_prompt
+        if config.mode in ['jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
+            from .llm_prompt import load_baseline_llm_prompt
+            self.prompt = load_baseline_llm_prompt
+        elif config.mode in ['morevqa_understanding']:
+            from .llm_prompt import load_llm_prompt_qwen
+            self.prompt = load_llm_prompt_qwen
     
     def prepare_input(self, datas, additional_system_prompt=None):
         texts = []

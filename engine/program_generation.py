@@ -1,10 +1,10 @@
-from .step_interpreters import InternLM, InternLM2, VideoLLaVA, load_model, unload_model
+from .step_interpreters import InternLM, Qwen, VideoLLaVA, load_model, unload_model
 import util
 import torch.distributed as dist
 
 def Global_planning(config, EXTERNAL_MEMORY, **kwargs):
     # load model
-    model = InternLM2(config, device=kwargs['device'])
+    model = InternLM(config, device=kwargs['device'])
     model = load_model(model, kwargs['device'], config)
     model.eval()
     # make data iterable (bsz: batch_size//log_freq)
@@ -46,11 +46,13 @@ def Global_planning(config, EXTERNAL_MEMORY, **kwargs):
     
 def Program_generation(config, **kwargs):
     # load model
-    if config.mode in ['jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
+    if config.llm_type == 'internlm':
         model = InternLM(config, device=kwargs['device'])
-    elif config.mode in ['morevqa_understanding']:
-        model = InternLM2(config, device=kwargs['device'])
-    model = load_model(model, kwargs['device'], config)
+        model = load_model(model, kwargs['device'], config)
+    elif config.llm_type == 'qwen':
+        model = Qwen(config, device=kwargs['device'])
+    else:
+        raise Exception('Invalid LLM type')
     model.eval()
     # make data iterable (bsz: batch_size//log_freq)
     dataset = util.CustomDataset(kwargs['data'])
@@ -84,11 +86,13 @@ def Program_generation(config, **kwargs):
 
 def Understanding_generation(config, **kwargs):
     # load model
-    if config.mode in ['jcef', 'morevqa', 'morevqa_retrieve']:
+    if config.llm_type == 'internlm':
         model = InternLM(config, device=kwargs['device'])
-    elif config.mode in ['morevqa_understanding']:
-        model = InternLM2(config, device=kwargs['device'])
-    model = load_model(model, kwargs['device'], config)
+        model = load_model(model, kwargs['device'], config)
+    elif config.llm_type == 'qwen':
+        model = Qwen(config, device=kwargs['device'])
+    else:
+        raise Exception('Invalid LLM type')
     model.eval()
     # make data iterable (bsz: batch_size//log_freq)
     und_dataset = util.CustomDataset(kwargs['data'])
@@ -151,11 +155,13 @@ def Understanding_generation(config, **kwargs):
 
 def StageProgram_generation(config, **kwargs):
     # load model
-    if config.mode in ['jcef', 'morevqa', 'morevqa_retrieve']:
+    if config.llm_type == 'internlm':
         model = InternLM(config, device=kwargs['device'])
-    elif config.mode in ['morevqa_understanding']:
-        model = InternLM2(config, device=kwargs['device'])
-    model = load_model(model, kwargs['device'], config)
+        model = load_model(model, kwargs['device'], config)
+    elif config.llm_type == 'qwen':
+        model = Qwen(config, device=kwargs['device'])
+    else:
+        raise Exception('Invalid LLM type')
     model.eval()
     # make data iterable (bsz: batch_size//log_freq)
     dataset = util.CustomDataset(kwargs['data'])

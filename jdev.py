@@ -13,6 +13,22 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from engine.step_interpreters import InternLM, InternLM2, Qwen, load_model
 
+def load_video_context(config, video_id, vlm_answer):
+    with open(config.video_context_vid, 'r') as f:
+        datas_vid = json.load(f)
+    with open(config.video_context, 'r') as f:
+        datas = json.load(f)
+    contexts = []
+    # context formatting
+    # add global video caption
+    contexts.append(datas_vid[video_id])
+    # add frame caption
+    for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
+        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+    if vlm_answer:
+        return '\n'.join(contexts) + '\n' + vlm_answer
+    return '\n'.join(contexts)
+
 def main():
     mp.set_start_method('spawn')
     util.init_distributed_mode(config)
@@ -63,7 +79,7 @@ def main():
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
-    header = '[LLM_only]'
+    header = '[JDEV]'
     for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
@@ -76,12 +92,12 @@ def main():
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
 
-        # Final prediction (without using video context, only question)
+        # Final prediction (without using VLM answer : set to None)
         logging.info('Start final prediction')
-        Final_input = {'question': batch['query'], 'option': batch['possible_answers']}
+        Final_input = {'video_context': [load_video_context(config, video_id, None) for video_id in batch['video_id']], 'question': batch['query'], 'option': batch['possible_answers']}
         # convert data
         Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
-        Final_predictions = model.generate(Final_input, prompt_type='llm_only', num_options=config.dataset.num_options)
+        Final_predictions = model.generate(Final_input, prompt_type='final', num_options=config.dataset.num_options)
         
         # update information
         all_results += Final_predictions
@@ -158,6 +174,6 @@ def main():
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logging.info(f"End run\nElapsed time: {total_time_str}")
-        
+       
 if __name__  == '__main__':
     main()

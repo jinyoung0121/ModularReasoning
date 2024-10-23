@@ -89,7 +89,7 @@ def Stage2(config, EXTERNAL_MEMORY, **kwargs):
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
                                                                                                 'indicator': indicator.bool(),
-                                                                                                'is_expand': None},) # assume only batch 1
+                                                                                                'qa_type': None},) # assume only batch 1
                 # update 'anchor_frame_ids' field
                 EXTERNAL_MEMORY[i]['anchor_frame_ids'] = output_state['RETRIEVE0']
             except:
@@ -142,7 +142,7 @@ def Stage3(config, EXTERNAL_MEMORY, **kwargs):
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
                                                                                                 'indicator': indicator.bool(),
-                                                                                                'is_expand': EXTERNAL_MEMORY[i]['qa_type']},) # assume only batch 1
+                                                                                                'qa_type': EXTERNAL_MEMORY[i]['qa_type']},) # assume only batch 1
                 # update 'frame_ids' field
                 EXTERNAL_MEMORY[i]['frame_ids'] = output_state['RETRIEVE0']
             except:

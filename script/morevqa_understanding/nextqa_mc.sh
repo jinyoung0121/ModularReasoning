@@ -19,7 +19,7 @@
 
 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding.py \
     --options \
-    exp_name s1s2s3s4_16frame_newprompt_frameOR_viclip \
+    exp_name s1s2s3s4_16frame_newprompt_frameOR_viclip_internlm7b_revised \
     dataset.dataset_name NExTQA \
     dataset.data_path datas/NExT-QA \
     dataset.split val \
@@ -32,5 +32,6 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     image_vlm_type internlmxcomposer \
     video_vlm_type videollava \
     retrieve_type univtg \
-    mode morevqa_understanding \
-    frame_id_selection_num 16
+    llm_type internlm \
+    frame_id_selection_num 16 \
+    mode morevqa_understanding

@@ -22,7 +22,9 @@ internlm:
     top_p: 0.8
 
 qwen:
-    model_path: ./pretrained_model/Qwen2.5-14B-Instruct
+    model_path_7b: ./pretrained_model/Qwen2.5-7B-Instruct
+    model_path_14b: ./pretrained_model/Qwen2.5-14B-Instruct
+    model_size: 7b
     max_batch_size: 3
     max_new_tokens: 512
     do_sample: False
