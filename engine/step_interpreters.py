@@ -300,13 +300,13 @@ class TRUNCATEInterpreter():
                 prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
                 anchor_index = min(prev_frame_ids)
-                prog_step.state['indicator'][anchor_index:] = False
+                prog_step.state['indicator'][anchor_index+1:] = False
         elif truncate_option == 'after':
             if len(prev_frame_ids) == 0: # nothing is detected in the previous step
                 prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
                 anchor_index = max(prev_frame_ids)
-                prog_step.state['indicator'][:anchor_index+1] = False
+                prog_step.state['indicator'][:anchor_index] = False
         # if temporal does not exist, escape
         if torch.all(prog_step.state['indicator']==False):
             prog_step.state[output_var] = []
@@ -1325,8 +1325,10 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
             s_idx, e_idx = 0, len(vid_list)
             step = len(vid_list) // fnum
         # vid_list = vid_list[::step][:fnum]
+        if s_idx >= e_idx:
+            vid_list = [vid_list[e_idx - 1] for _ in range(fnum)]
         # if step==0, it means # of frames are lower than f_num, therefore pad with first frame
-        if step == 0:
+        elif step == 0:
             pad_num = fnum-(e_idx - s_idx)
             vid_list = [vid_list[s_idx] for _ in range(pad_num)] + vid_list[s_idx:e_idx]
         else:
@@ -1417,18 +1419,18 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         temporal_windows = predictions[0]['pred_relevant_windows']
         # ranking prediction
         rank_k = min(self.topk, len(temporal_windows))
-        temporal_windows = self.ranking_window(video_path, windows=temporal_windows, text=query, topk=rank_k, start_idx=start_idx, end_idx=end_idx)
+        temporal_window = self.ranking_window(video_path, windows=temporal_windows, text=query, topk=rank_k, start_idx=start_idx, end_idx=end_idx)
         # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
-        s_idx, e_idx = round(temporal_windows[0][0]), round(temporal_windows[0][1])
+        s_idx, e_idx = temporal_window[0], temporal_window[1]
         # when temporal expansion is required, update the start_idx (s_idx) and end_idx (e_idx)
         # if is_expand == 'TRUE':
         if prog_step.state['qa_type'] == 'reasoning':
             c_idx = (s_idx + e_idx) / 2
             t_win_len = e_idx - s_idx
             expanded_t_win_len = t_win_len * self.config.window_expand_ratio
-            s_idx, e_idx = round(c_idx - expanded_t_win_len / 2), round(c_idx + expanded_t_win_len / 2)
-        start_idx_new = max(start_idx, start_idx + s_idx)
-        end_idx_new = min(end_idx, start_idx + e_idx)
+            s_idx, e_idx = c_idx - expanded_t_win_len / 2, c_idx + expanded_t_win_len / 2
+        start_idx_new = max(start_idx, start_idx + round(s_idx))
+        end_idx_new = min(end_idx, start_idx + round(e_idx))
         # update frame_id
         frame_id = [i for i in range(start_idx_new, end_idx_new + 1)] if start_idx_new <= end_idx_new else []
         prog_step.state[output_var] = frame_id
@@ -1471,7 +1473,7 @@ class VideoLLaVA(torch.nn.Module):
         else:
             start, end = -100000, 100000
         start_idx = max(first_idx, round(start * fps))
-        end_idx = min(round(end * fps), max_frame)
+        end_idx = min(round(end * fps) + 1, max_frame)
         # seg_size = float(end_idx - start_idx) / num_segments
         # frame_indices = np.array([
         #     int(start_idx + (seg_size / 2) + np.round(seg_size * idx))
@@ -1521,7 +1523,7 @@ class VideoLLaVA(torch.nn.Module):
         if len(candidate_frame_ids) == 0:
             return []
         start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
-        bound = [start_idx, end_idx + 1]
+        bound = [start_idx, end_idx]
         # initialize QA pool. save {frame_id, Q, A} pair
         QA_pool = []
         # initialize index for selecting question
