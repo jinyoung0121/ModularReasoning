@@ -89,6 +89,7 @@ def Stage2(config, EXTERNAL_MEMORY, **kwargs):
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
                                                                                                 'indicator': indicator.bool(),
+                                                                                                'conj': 'none',
                                                                                                 'qa_type': None},) # assume only batch 1
                 # update 'anchor_frame_ids' field
                 EXTERNAL_MEMORY[i]['anchor_frame_ids'] = output_state['RETRIEVE0']
@@ -142,6 +143,7 @@ def Stage3(config, EXTERNAL_MEMORY, **kwargs):
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],
                                                                                                 'image': frames,
                                                                                                 'indicator': indicator.bool(),
+                                                                                                'conj': EXTERNAL_MEMORY[i]['conjunction'],
                                                                                                 'qa_type': EXTERNAL_MEMORY[i]['qa_type']},) # assume only batch 1
                 # update 'frame_ids' field
                 EXTERNAL_MEMORY[i]['frame_ids'] = output_state['RETRIEVE0']
@@ -177,6 +179,14 @@ def Stage4_image(config, EXTERNAL_MEMORY, **kwargs):
                 # get output by program execution
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'image': data['image'][0],
                                                                                                  'frame_ids': EXTERNAL_MEMORY[i]['frame_ids'],}) # assume only batch 
+                # determine whether to proeed [video] processing
+                if output_state['REQUIRE_VIDEO0'] == 'yes':
+                    EXTERNAL_MEMORY[i]['process_video'] = True
+                elif output_state['REQUIRE_VIDEO0'] == 'no':
+                    EXTERNAL_MEMORY[i]['process_video'] = False
+                else:
+                    raise Exception('Invalid process_video type')
+                
                 # image VQA output
                 QA_pools = []
                 QA_pools += output_state['VQA0']
@@ -217,7 +227,7 @@ def Stage4_video(config, EXTERNAL_MEMORY, **kwargs):
     # External Memory update using program execution output
     for i, data in enumerate(metric_logger.log_every(dataloader, config.log_freq, header)):
         # only continue stage2 if process_stage4==True
-        if EXTERNAL_MEMORY[i]['process_stage4']:
+        if EXTERNAL_MEMORY[i]['process_stage4'] and EXTERNAL_MEMORY[i]['process_video']:
             try:
                 # get output by program execution
                 final_output, output_state = interpreter.execute(data['program'][0], init_state={'video_path': data['video_path'][0],

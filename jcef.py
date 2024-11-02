@@ -11,7 +11,7 @@ import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from engine.step_interpreters import InternLM, InternLM2, Qwen, load_model
+from engine.step_interpreters import InternLM, Qwen, load_model
 
 def load_video_context(config, video_id, vlm_answer):
     with open(config.video_context, 'r') as f:

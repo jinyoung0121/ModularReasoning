@@ -121,7 +121,8 @@ def Understanding_generation(config, **kwargs):
 
     # prepare data for program generation
     questions = [d['question'] for d in kwargs['data']]
-    prog_inputs = [{'question': question, 'understanding': understanding} for question, understanding in zip(questions, understandings)]
+    qa_types = [d['qa_type'] for d in kwargs['data']]
+    prog_inputs = [{'question': question, 'qa_type': qa_type, 'understanding': understanding} for question, qa_type, understanding in zip(questions, qa_types, understandings)]
     
     # make data iterable (bsz: batch_size//log_freq)
     prog_dataset = util.CustomDataset(prog_inputs)
@@ -195,7 +196,7 @@ def StageProgram_generation(config, **kwargs):
 
 def VideoCaptioning(config, **kwargs):
     # load model
-    if config.vlm_type == 'videollava':
+    if config.video_vlm_type == 'videollava':
         model = VideoLLaVA(config, device=kwargs['device'])
     else:
         raise Exception('Invalid model type')
@@ -217,7 +218,7 @@ def VideoCaptioning(config, **kwargs):
         valid_datas = [(j, d) for j, d in enumerate(data) if d['is_process']]
         # only pass valid inputs(understandings) to the model
         valid_inputs = [data for _, data in valid_datas]
-        valid_outputs = model.video_captioning(valid_inputs, num_options=config.dataset.num_options)
+        valid_outputs = model.video_captioning(valid_inputs)
         results = ['none'] * len(data)
         for (k, _), output in zip(valid_datas, valid_outputs):
             results[k] = output

@@ -141,12 +141,12 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
             prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
         else:
             raise TypeError('data must be list of strings')
-    elif prompt_type in ['stage1', 'stage2', 'stage3', 'stage4']:
+    elif prompt_type in ['stage1', 'stage2', 'stage3']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']).replace('INSERT_UNDERSTANDING_HERE', d['understanding']) for d in data]
         else:
             raise TypeError('data must be list of strings')
-    elif prompt_type == 'stage4':
+    elif prompt_type in ['stage4', 'stage4_image', 'stage4_video']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']).replace('INSERT_UNDERSTANDING_HERE', d['understanding']) for d in data]
         else:

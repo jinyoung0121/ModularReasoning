@@ -67,7 +67,7 @@ videollava:
 
 viclip:
     model_path: ./pretrained_model/ViCLIP-L-14-hf
-    topk: 15
+    topk: -1
 
 owlvit:
     model_path: ./pretrained_model/owlvit-base-patch32

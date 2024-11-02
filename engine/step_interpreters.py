@@ -292,21 +292,21 @@ class TRUNCATEInterpreter():
     def execute(self,prog_step,inspect=False):
         truncate_option, anchor_option, output_var = self.parse(prog_step)
         prev_frame_ids = prog_step.state[anchor_option]
+        start_idx, end_idx = min(prev_frame_ids), max(prev_frame_ids)
+        mid_idx = (start_idx+end_idx)/2
         if truncate_option == 'when':
             prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
-            prog_step.state['indicator'][prev_frame_ids] = True
+            prog_step.state['indicator'][start_idx: end_idx+1] = True
         elif truncate_option == 'before':
             if len(prev_frame_ids) == 0: # nothing is detected in the previous step
                 prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
-                anchor_index = min(prev_frame_ids)
-                prog_step.state['indicator'][anchor_index+1:] = False
+                prog_step.state['indicator'][math.ceil(mid_idx):] = False
         elif truncate_option == 'after':
             if len(prev_frame_ids) == 0: # nothing is detected in the previous step
                 prog_step.state['indicator'] = torch.zeros(prog_step.state['indicator'].size(0)).bool()
             else:
-                anchor_index = max(prev_frame_ids)
-                prog_step.state['indicator'][:anchor_index] = False
+                prog_step.state['indicator'][:math.floor(mid_idx)+1] = False
         # if temporal does not exist, escape
         if torch.all(prog_step.state['indicator']==False):
             prog_step.state[output_var] = []
@@ -653,8 +653,11 @@ class InternLMXComposerInterpreter(torch.nn.Module):
         if self.model_type == 'internlm-xcomposer2d5-7b':
             self.model.tokenizer = self.tokenizer
 
-        self.prompt = {'image_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
-                       'video_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
+        # self.prompt = {'image_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
+        #                'video_vqa': '<ImageHere>{} Please answer the question in a single word or phrase.',
+        #                'verify': '<ImageHere>{} Please answer the question only yes or no.'}
+        self.prompt = {'image_vqa': '<ImageHere>{} Answer the question in one-sentence.',
+                       'video_vqa': '<ImageHere>{} Answer the question in one-sentence.',
                        'verify': '<ImageHere>{} Please answer the question only yes or no.'}
         self.to_PIL = transforms.ToPILImage()
         self.max_batch_size = self.config.internlmxcomposer.max_batch_size
@@ -662,8 +665,8 @@ class InternLMXComposerInterpreter(torch.nn.Module):
     @ torch.no_grad()
     def image_predict(self, prog_step, questions):
         candidate_frame_ids = prog_step.state['frame_ids']
-        # select candidate frame ids if frame_id_selection_num > 0
-        if self.config.frame_id_selection_num > -1 and len(candidate_frame_ids) > 0:
+        # select candidate frame ids if frame_id_selection_num > 0 and use additional video captioning/QA output
+        if self.config.frame_id_selection_num > -1 and len(candidate_frame_ids) > 0 and prog_step.state['REQUIRE_VIDEO0'] == 'yes':
             s_idx, e_idx = min(candidate_frame_ids), max(candidate_frame_ids)
             # set minimum: 1fps
             num_frames = min(self.config.frame_id_selection_num, e_idx - s_idx + 1)
@@ -672,6 +675,9 @@ class InternLMXComposerInterpreter(torch.nn.Module):
         QA_pool = []
         # initialize index for selecting question
         if isinstance(questions, str):
+            # if no question augmenation, pass the empty list
+            if questions == 'none':
+                return []
             questions = [questions]
             q_idxs = np.zeros(len(candidate_frame_ids), dtype=int).tolist()
         elif isinstance(questions, list):
@@ -810,7 +816,7 @@ class InternLM(torch.nn.Module):
         self.model.eval()
         
         self.max_batch_size = self.config.internlm.max_batch_size
-        if config.mode in ['jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
+        if config.mode in ['llm_only', 'jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
             from .llm_prompt import load_baseline_llm_prompt
             self.prompt = load_baseline_llm_prompt
         elif config.mode in ['morevqa_understanding']:
@@ -1340,7 +1346,7 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         vid_tube = torch.from_numpy(vid_tube).to(device, non_blocking=True).float()
         return vid_tube
     
-    def retrieve_clip(self, frames, text, windows=None, models={'viclip':None, 'tokenizer':None}, topk=15, start_idx=None, end_idx=None, fps=None, device=None):
+    def retrieve_clip(self, frames, text, windows=None, models={'viclip':None, 'tokenizer':None}, start_idx=None, end_idx=None, fps=None, device=None):
         assert(type(models)==dict and models['viclip'] is not None and models['tokenizer'] is not None)
         assert fps
         clip_model, clip_tokenizer =  models['viclip'], models['tokenizer']
@@ -1348,7 +1354,7 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         # visual feature
         vid_feats = []
         confid_score = []
-        for idx, window in enumerate(windows[:topk]):
+        for idx, window in enumerate(windows):
             s_idx = max(start_idx, start_idx + window[0])
             e_idx = min(end_idx, start_idx + window[1])
             confid_score.append(window[2])
@@ -1359,22 +1365,23 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         # text feature
         text_feat = self.get_text_feat(text, clip_model, clip_tokenizer)
         # window ranking
-        probs, idxs = clip_model.get_predict_label(text_feat, vid_feats_tensor, top=topk)
+        probs, idxs = clip_model.get_predict_label(text_feat, vid_feats_tensor, top=len(windows))
         probs = probs.flatten().detach()
         idxs = idxs.flatten().detach()
         return confid_score, probs, idxs
     
-    def ranking_window(self, video_path, windows=None, text='', topk=5, start_idx=None, end_idx=None):
+    def ranking_window(self, video_path, windows=None, text='', start_idx=None, end_idx=None):
         assert windows and text != '','only pass if windows and text exist'
         # extract video information
         frames, fps = self.load_video(video_path)
         # ranking temporal windows
-        confid, probs, idxs = self.retrieve_clip(frames, text, windows=windows, models=self.retrieveclip_model_tokenizer, topk=topk, start_idx=start_idx, end_idx=end_idx, fps=fps, device=self.dev)
+        confid, probs, idxs = self.retrieve_clip(frames, text, windows=windows, models=self.retrieveclip_model_tokenizer, start_idx=start_idx, end_idx=end_idx, fps=fps, device=self.dev)
         # ranked_windows = [windows[idx] for idx in idxs]
         clip_score = torch.zeros_like(probs)
         clip_score = clip_score.scatter(0, idxs, probs)
         clip_score = confid*clip_score
         top1_idx = torch.argmax(clip_score).item()
+        # top1_idx = idxs[0].item()
         top1_window = windows[top1_idx]
         return top1_window
     
@@ -1385,11 +1392,10 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         args = parse_result['args']
         query = args['query']
         nouns = args['nouns']
-        is_expand = args.get('expand', 'FALSE') # do not expand temporal window if 'expand'!=TRUE
-        return query, nouns, is_expand, output_var
+        return query, nouns, output_var
     
     def execute(self,prog_step,inspect=False):
-        query, nouns, is_expand, output_var = self.parse(prog_step)
+        query, nouns, output_var = self.parse(prog_step)
         # initialize indicator
         indicator = copy.deepcopy(prog_step.state['indicator'].detach())
         # update frame_id based on condition (anchor)
@@ -1405,8 +1411,14 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         candidate_frame_ids = torch.where(indicator==True)[0].tolist()
         # since candidate_frame_ids may noy consecutive, using min and max value to set temporal windows
         start_idx, end_idx = min(candidate_frame_ids), max(candidate_frame_ids)
+        # if video grounding is not required due to no action, escape
         if query == 'none':
-            frame_id = [i for i in range(start_idx, end_idx + 1)]
+            if prog_step.state['conj'] == 'after':
+                frame_id = [i for i in range(start_idx, min(start_idx+self.config.frame_id_selection_num, len(indicator)))]
+            elif prog_step.state['conj'] == 'before':
+                frame_id = [i for i in range(max(end_idx-self.config.frame_id_selection_num+1, 0), end_idx+1)]
+            else: # 'when' or 'none'
+                frame_id = [i for i in range(start_idx, end_idx + 1)]
             prog_step.state[output_var] = frame_id
             return frame_id
         # convert video_path into vid
@@ -1417,9 +1429,11 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         # temporal grounding prediction
         predictions = self.predictor.localize_moment(vid=vid, query_list=[query], start_idx=start_idx, end_idx=end_idx)
         temporal_windows = predictions[0]['pred_relevant_windows']
-        # ranking prediction
-        rank_k = min(self.topk, len(temporal_windows))
-        temporal_window = self.ranking_window(video_path, windows=temporal_windows, text=query, topk=rank_k, start_idx=start_idx, end_idx=end_idx)
+        # ranking prediction, if topk < 0 use all prediction
+        if self.topk > 0:
+            rank_k = min(self.topk, len(temporal_windows))
+            temporal_windows = temporal_windows[:rank_k]
+        temporal_window = self.ranking_window(video_path, windows=temporal_windows, text=query, start_idx=start_idx, end_idx=end_idx)
         # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
         s_idx, e_idx = temporal_window[0], temporal_window[1]
         # when temporal expansion is required, update the start_idx (s_idx) and end_idx (e_idx)
@@ -1496,24 +1510,13 @@ class VideoLLaVA(torch.nn.Module):
         prompts_lens = [len(p.replace('<video>','')) for p in prompts]
         clips = [self.load_video(d['video_path']) for d in data]
         # generate output
-        if self.config.videollava.num_return_sequences == 1: # run in batch
-            output_texts = []
-            for prompt, prompt_len, clip in zip(prompts, prompts_lens, clips):
-                inputs = self.processor(text=prompt, videos=clip, return_tensors="pt", max_length=self.max_length).to(self.dev)
-                generated_ids = self.model.generate(**inputs, max_length=self.max_length, do_sample=self.do_sample)
-                generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-                generated_text = generated_text[prompt_len:].strip().replace('Ъ', '')
-                output_texts.append(generated_text)
-        else: # batch pff
-            output_texts = []
-            assert self.do_sample == True and self.num_return_sequences > 1
-            for prompt, prompt_len, clip in zip(prompts, prompts_lens, clips):
-                inputs = self.processor(text=prompt, videos=clip, return_tensors="pt", max_length=self.max_length).to(self.dev)
-                generated_ids = self.model.generate(**inputs, max_length=self.max_length, do_sample=self.do_sample, top_k=self.top_k,
-                                                    top_p=self.top_p, temperature=self.temperature, num_return_sequences=self.num_segments)
-                generated_texts = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                generated_texts = [generated_text[prompt_len:].strip().replace('Ъ', '') for generated_text in generated_texts]
-                output_texts.append(generated_texts)
+        output_texts = []
+        for prompt, prompt_len, clip in zip(prompts, prompts_lens, clips):
+            inputs = self.processor(text=prompt, videos=clip, return_tensors="pt", max_length=self.max_length).to(self.dev)
+            generated_ids = self.model.generate(**inputs, max_length=self.max_length, do_sample=self.do_sample)
+            generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+            generated_text = generated_text[prompt_len:].strip().replace('Ъ', '')
+            output_texts.append(generated_text)
         return output_texts
 
     @ torch.no_grad()
@@ -1528,6 +1531,9 @@ class VideoLLaVA(torch.nn.Module):
         QA_pool = []
         # initialize index for selecting question
         if isinstance(questions, str):
+            # if no question augmenation, pass the empty list
+            if questions == 'none':
+                return []
             questions = [questions]
         elif isinstance(questions, list):
             if len(questions) == 0:
@@ -1568,6 +1574,26 @@ class VideoLLaVA(torch.nn.Module):
         prog_step.state[output_var] = QA_pool
         return QA_pool
 
+class REQUIREVIDEOInterpreter():
+    step_name = 'require_video'
+    def __init__(self):
+        # print(f'Registering {self.step_name} step')
+        pass
+
+    def parse(self,prog_step):
+        parse_result = parse_step(prog_step.prog_str)
+        step_name = parse_result['step_name']
+        output_var = parse_result['output_var']
+        args = parse_result['args']
+        video_option = args['bool']
+        assert(step_name==self.step_name)
+        return video_option, output_var
+
+    def execute(self,prog_step,inspect=False):
+        video_option, output_var = self.parse(prog_step)
+        prog_step.state[output_var] = video_option
+        return video_option
+
 class Qwen(torch.nn.Module):
     step_name = 'qwen'
     def __init__(self, config, device=None):
@@ -1587,7 +1613,7 @@ class Qwen(torch.nn.Module):
         self.max_batch_size = self.config.qwen.max_batch_size
         self.max_new_tokens = self.config.qwen.max_new_tokens
         self.do_sample = self.config.qwen.do_sample
-        if config.mode in ['jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
+        if config.mode in ['llm_only', 'jcef', 'jdev', 'morevqa', 'morevqa_retrieve']:
             from .llm_prompt import load_baseline_llm_prompt
             self.prompt = load_baseline_llm_prompt
         elif config.mode in ['morevqa_understanding']:
@@ -1742,6 +1768,7 @@ def register_step_interpreters(config, **kwargs):
             loaded_model = dict(vqa=vqa_model)
             step_interpreters = dict(
                 vqa=vqa_model,
+                require_video=REQUIREVIDEOInterpreter(),
             )
             return step_interpreters, loaded_model
         elif kwargs['stage'] == 'stage4_video':
@@ -1753,6 +1780,7 @@ def register_step_interpreters(config, **kwargs):
             loaded_model = dict(vqa=vqa_model)
             step_interpreters = dict(
                 vqa=vqa_model,
+                require_video=REQUIREVIDEOInterpreter(),
             )
             return step_interpreters, loaded_model
         else:

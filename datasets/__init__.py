@@ -30,6 +30,12 @@ def get_dataset(config_dataset):
     elif dataset_name == 'STAR':
         from datasets.star import STARDataset
         dataset = STARDataset(**config_dataset)
+    elif dataset_name == 'TVQA':
+        from datasets.tvqa import TVQADataset
+        dataset = TVQADataset(**config_dataset)
+    elif dataset_name == 'IntentQA':
+        from datasets.intentqa import IntentQADataset
+        dataset = IntentQADataset(**config_dataset)
     elif dataset_name == 'ActivityNetQA':
         from datasets.activitynetqa import ActivityNetQADataset
         dataset = ActivityNetQADataset(**config_dataset) 

@@ -7,21 +7,36 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
+from engine import Program_generation, VideoCaptioning
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from engine.step_interpreters import InternLM, InternLM2, Qwen, load_model
+from engine.step_interpreters import InternLM, Qwen, load_model
 
-def load_video_context(config, video_id, vlm_answer):
-    with open(config.video_context_vid, 'r') as f:
-        datas_vid = json.load(f)
+# def load_video_context(config, video_id, vlm_answer):
+#     with open(config.video_context_vid, 'r') as f:
+#         datas_vid = json.load(f)
+#     with open(config.video_context, 'r') as f:
+#         datas = json.load(f)
+#     contexts = []
+#     # context formatting
+#     # add global video caption
+#     contexts.append(datas_vid[video_id])
+#     # add frame caption
+#     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
+#         contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+#     if vlm_answer:
+#         return '\n'.join(contexts) + '\n' + vlm_answer
+#     return '\n'.join(contexts)
+
+def load_video_context(config, caption, video_id, vlm_answer):
     with open(config.video_context, 'r') as f:
         datas = json.load(f)
     contexts = []
     # context formatting
     # add global video caption
-    contexts.append(datas_vid[video_id])
+    contexts.append(f'[video]caption: {caption}')
     # add frame caption
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
         contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
@@ -65,16 +80,17 @@ def main():
     all_query_types = []
     all_ids = []
     all_sample_ids = []
+    all_memories = []
 
-    # load model
-    if config.llm_type == 'internlm':
-        model = InternLM(config, device=device)
-        model = load_model(model, device, config)
-    elif config.llm_type == 'qwen':
-        model = Qwen(config, device=device)
-    else:
-        raise Exception('Invalid LLM type')
-    model.eval()
+    # # load model
+    # if config.llm_type == 'internlm':
+    #     model = InternLM(config, device=device)
+    #     model = load_model(model, device, config)
+    # elif config.llm_type == 'qwen':
+    #     model = Qwen(config, device=device)
+    # else:
+    #     raise Exception('Invalid LLM type')
+    # model.eval()
 
     start_time = time.time()
     logging.info('Start run')
@@ -83,7 +99,24 @@ def main():
     for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
-
+        
+        # initialize External Memory
+        logging.info('Initialize External Memory')
+        EXTERNAL_MEMORY = []
+        for sample_id, frames, query in zip(batch['sample_id'], batch['image'], batch['query']):
+            EXTERNAL_MEMORY.append({'sample_id':sample_id,
+                                    'original_question': query,
+                                    'num_frames': frames.size(0),
+                                    'question': query,
+                                    'frame_ids': [idx for idx in range(frames.size(0))],
+                                    'anchor_frame_ids': [],
+                                    'event_queue': ['none','none'],
+                                    'conjunction': 'none',
+                                    'require_ocr': False,
+                                    'qa_type': '',
+                                    'planning_error': None,
+                                    'error': None,
+                                    'VLM_answers': {'video': [], 'image': []},})
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -92,15 +125,29 @@ def main():
         all_ids += batch['video_id']
         all_sample_ids += batch['sample_id']
 
+        # Video captioning
+        logging.info('Start stage4[video] processing')
+        data_input = [{'question': 'Describe the video in detail.', 'video_path': video_path, 'is_process': True} for video_path in batch['video_path']]
+        video_captions = VideoCaptioning(config, data=data_input, device=device)
+        
+        # update External Memory (video caption)
+        caption_list = []
+        for idx, caption in enumerate(video_captions):
+            EXTERNAL_MEMORY[idx]['VLM_answers']['video'] = caption
+            caption_list.append(caption)
+        
         # Final prediction (without using VLM answer : set to None)
         logging.info('Start final prediction')
-        Final_input = {'video_context': [load_video_context(config, video_id, None) for video_id in batch['video_id']], 'question': batch['query'], 'option': batch['possible_answers']}
-        # convert data
-        Final_input= [dict(zip(Final_input.keys(), values)) for values in zip(*Final_input.values())]
-        Final_predictions = model.generate(Final_input, prompt_type='final', num_options=config.dataset.num_options)
+        # Final_input = {'video_context': [load_video_context(config, video_id, None) for video_id in batch['video_id']], 'question': batch['query'], 'option': batch['possible_answers']}
+        # Final_input = {'video_context': [load_video_context(config, caption, video_id, None) for caption, video_id in zip(caption_list, batch['video_id'])], 'question': batch['query'], 'option': batch['possible_answers']}
+
+        Final_input = [{'video_context': load_video_context(config, caption, video_id, None), 'question': question, 'option': option, 'is_process': True} \
+                                for caption, video_id, question, option in zip(caption_list, batch['video_id'], batch['query'], batch['possible_answers'])]
         
+        Final_predictions = Program_generation(config, device=device, data=Final_input, prompt_type='final')
         # update information
         all_results += Final_predictions
+        all_memories += EXTERNAL_MEMORY
         
         # compute metric
         try:
@@ -130,6 +177,7 @@ def main():
                 final_datas.update({'wups': all_wups})
             final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
             util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+            util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
@@ -170,6 +218,7 @@ def main():
             final_datas.update({'wups': all_wups})
         final_datas = list(map(lambda x: dict(zip(final_datas.keys(), x)), zip(*final_datas.values())))
         util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
+        util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
