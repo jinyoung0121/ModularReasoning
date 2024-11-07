@@ -84,6 +84,50 @@ def Program_generation(config, **kwargs):
     # return result
     return programs
 
+def Program_generation_CoT(config, **kwargs):
+    # load model
+    if config.llm_type == 'internlm':
+        model = InternLM(config, device=kwargs['device'])
+        model = load_model(model, kwargs['device'], config)
+    elif config.llm_type == 'qwen':
+        model = Qwen(config, device=kwargs['device'])
+    else:
+        raise Exception('Invalid LLM type')
+    model.eval()
+    # make data iterable (bsz: batch_size//log_freq)
+    dataset = util.CustomDataset(kwargs['data'])
+    dataloader = util.make_loader(dataset, config.batch_size // config.log_freq, config)
+    
+    metric_logger = util.MetricLogger(delimiter='  ')
+    header = '[{} program generation]'.format(kwargs['prompt_type'])
+    # generate programs
+    programs = []
+    for i, data in enumerate(metric_logger.log_every(dataloader, 1, header)):
+        # convert data
+        data = [dict(zip(data.keys(), values)) for values in zip(*data.values())]
+        # select valid inputs where the is_process==True
+        valid_datas = [(j, d) for j, d in enumerate(data) if d['is_process']]
+        # only pass valid inputs(understandings) to the model
+        valid_program = [program for _, program in valid_datas]
+        valid_outputs = model.generate(valid_program, prompt_type=kwargs['prompt_type'], num_options=config.dataset.num_options)
+        results = ['none'] * len(data)
+        for (k, _), output in zip(valid_datas, valid_outputs):
+            try:
+                results[k] = output.split('The answer is:\n')[1]
+            except:
+                results[k] = 'CODE ERROR!'
+            
+        programs += results
+    
+    metric_logger.synchronize_between_processes()
+    if util.is_dist_avail_and_initialized():
+        dist.barrier()
+    # unload model
+    unload_model(model)
+    
+    # return result
+    return programs
+
 def Understanding_generation(config, **kwargs):
     # load model
     if config.llm_type == 'internlm':

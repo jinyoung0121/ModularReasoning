@@ -2,16 +2,16 @@
 def load_baseline_llm_prompt(data, prompt_type, config, num_options=5):
     if prompt_type == 'module1':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/module1.prompt'
+        prompt_path = 'datas/prompt/module1_baseline.prompt'
     elif prompt_type == 'module2':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/module2.prompt'
+        prompt_path = 'datas/prompt/module2_baseline.prompt'
     elif prompt_type == 'module2_retrieve':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/module2_spatioretrieve.prompt'
     elif prompt_type == 'module3':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/module3.prompt'
+        prompt_path = 'datas/prompt/module3_baseline.prompt'
     elif prompt_type == 'final':
         additional_system_prompt = 'Only answer with the final answer.'
         if config.question_type == 'mc':
@@ -86,30 +86,54 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     if prompt_type == 'planning':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/planning_global.prompt'
+    elif prompt_type == 'stage1_noreasoning':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage1_noreasoning.prompt'
     elif prompt_type == 'stage1_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage1_understanding.prompt'
     elif prompt_type == 'stage1':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage1.prompt'
+    elif prompt_type == 'stage1_CoT':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage1_CoT.prompt'
+    elif prompt_type == 'stage2_noreasoning':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage2_noreasoning.prompt'
     elif prompt_type == 'stage2_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage2_understanding.prompt'
     elif prompt_type == 'stage2':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage2.prompt'
+    elif prompt_type == 'stage2_CoT':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage2_CoT.prompt'
+    elif prompt_type == 'stage3_noreasoning':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage3_noreasoning.prompt'
     elif prompt_type == 'stage3_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage3_understanding.prompt'
     elif prompt_type == 'stage3':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage3.prompt'
+    elif prompt_type == 'stage3_CoT':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage3_CoT.prompt'
+    elif prompt_type == 'stage4_noreasoning':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage4_noreasoning.prompt'
     elif prompt_type == 'stage4_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage4_understanding.prompt'
     elif prompt_type == 'stage4':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage4.prompt'
+    elif prompt_type == 'stage4_CoT':
+        additional_system_prompt = 'Only answer with the final answer similar to given examples.'
+        prompt_path = 'datas/prompt/stage4_CoT.prompt'
     elif prompt_type == 'final':
         additional_system_prompt = 'Only answer with the final answer.'
         if config.question_type == 'mc':
@@ -131,12 +155,12 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     with open(prompt_path) as f:
         base_prompt = f.read().strip()
     
-    if prompt_type in ['planning', 'stage1_understanding', 'stage2_understanding', 'stage3_understanding']:
+    if prompt_type in ['planning', 'stage1_understanding', 'stage2_understanding', 'stage3_understanding', 'stage1_CoT', 'stage2_CoT', 'stage3_CoT']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
         else:
             raise TypeError('data must be list of strings')
-    elif prompt_type == 'stage4_understanding':
+    elif prompt_type in ['stage4_understanding', 'stage4_CoT']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
         else:

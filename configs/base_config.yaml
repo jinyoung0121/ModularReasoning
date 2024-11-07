@@ -93,5 +93,7 @@ retrieve_type: univtg                               # which retrieve model to us
 question_type: mc                                   # either mc(multiple-choice) or oe(open-ended)
 video_context: ./datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json
 video_context_vid: ./datas/NExT-QA/nextqa/videollava_global_val.json
+skip_connection: ./datas/NExT-QA/nextqa/videollava_qa_val.json
 window_expand_ratio: 1.5                            # temporal window expand ratio
 frame_id_selection_num: -1                          # number of selected frame id for imageQA in reasoning stage (only in ours:morevqa_understanding), -1 indicates deactivated
+enable_skipconnection: False

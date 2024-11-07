@@ -25,7 +25,7 @@ def load_video_context(config, video_id, vlm_answer):
     contexts.append(f"[video]caption:{datas_vid[video_id]}")
     # add frame caption
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
-        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+        contexts.append(f"[frame{frame_idx:>3}]caption: {caption}")
     results = '[global information]' + '\n' + '\n'.join(contexts)
     if vlm_answer:
         results += '\n' + '[local information]'

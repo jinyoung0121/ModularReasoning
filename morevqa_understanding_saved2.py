@@ -25,14 +25,14 @@ def load_video_context(config, video_id, vlm_answer):
     contexts.append(f"[video]caption:{datas_vid[video_id]}")
     # add frame caption
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
-        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+        contexts.append(f"[frame{frame_idx:>3}]caption: {caption}")
     results = '[global information]' + '\n' + '\n'.join(contexts)
     if vlm_answer:
         results += '\n' + '[local information]'
     if vlm_answer['video']:
         results += '\n' + vlm_answer['video']
     if vlm_answer['image']:
-        results += '\n' + vlm_answer['image']
+        results += '\n' + vlm_answer['image'].replace('[frame ','[frame')
     return results
 
 def main():
@@ -67,7 +67,7 @@ def main():
         dataloader.sampler.set_epoch(-1)
     
     # load saved result
-    with open('/hub_data1/jinyoungkim/ModularReasoning/results/NExTQA/val/morevqa_understanding/new_pipeline_fps1_notopk_imgvid_newstage4_2024-11-02_03-37/external_memory.json', 'r') as f:
+    with open('/hub_data1/jinyoungkim/ModularReasoning/results/NExTQA/val/morevqa_understanding/new_pipeline_fps1_notopk_imgvidall_selectedwindow_all_shortanswer_saved2_check_github_version_final_check_2024-11-07_02-25/external_memory.json', 'r') as f:
         saved_data = json.load(f)
     saved_data = {item["sample_id"]: {k: v for k, v in item.items()} for item in saved_data}
     
