@@ -127,7 +127,7 @@ def main():
 
         # Video captioning
         logging.info('Start stage4[video] processing')
-        data_input = [{'question': 'Describe the video in detail.', 'video_path': video_path, 'is_process': True} for video_path in batch['video_path']]
+        data_input = [{'question': 'Step-by-step describe what is happening in the video.', 'video_path': video_path, 'is_process': True} for video_path in batch['video_path']]
         video_captions = VideoCaptioning(config, data=data_input, device=device)
         
         # update External Memory (video caption)

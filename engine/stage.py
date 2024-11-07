@@ -189,8 +189,8 @@ def Stage4_image(config, EXTERNAL_MEMORY, **kwargs):
                 
                 # image VQA output
                 QA_pools = []
-                QA_pools += output_state['VQA0']
-                QA_pools += output_state['VQA1']
+                QA_pools += output_state['VQA']
+                QA_pools += output_state['IMAGE_VQA']
                 
                 # sort in ascending order based on frame_id
                 sorted_QA_pools = sorted(QA_pools, key=lambda x:x['frame_id'])
@@ -234,8 +234,8 @@ def Stage4_video(config, EXTERNAL_MEMORY, **kwargs):
                                                                                                  'frame_ids': EXTERNAL_MEMORY[i]['frame_ids'],}) # assume only batch 1
                 # video VQA output
                 QA_pools = []
-                QA_pools += output_state['VQA0']
-                QA_pools += output_state['VQA1']
+                QA_pools += output_state['VQA']
+                QA_pools += output_state['VIDEO_VQA']
                 
                 # answer formatting
                 answers = []

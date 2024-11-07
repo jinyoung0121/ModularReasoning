@@ -33,6 +33,9 @@ def get_dataset(config_dataset):
     elif dataset_name == 'TVQA':
         from datasets.tvqa import TVQADataset
         dataset = TVQADataset(**config_dataset)
+    elif dataset_name == 'EgoSchema':
+        from datasets.egoschema import EgoSchemaDataset
+        dataset = EgoSchemaDataset(**config_dataset)
     elif dataset_name == 'IntentQA':
         from datasets.intentqa import IntentQADataset
         dataset = IntentQADataset(**config_dataset)

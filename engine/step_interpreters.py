@@ -752,7 +752,10 @@ class InternLMXComposerInterpreter(torch.nn.Module):
         # initialize QA_pool. save video and image result {video: {Q, A} pair, image: {frame_id, Q, A} pair}
         QA_pool = []
         # reasoning over image
-        QA_pool += self.image_predict(prog_step, questions)
+        if 'VIDEO' in output_var:
+            pass
+        else:
+            QA_pool += self.image_predict(prog_step, questions)
         prog_step.state[output_var] = QA_pool
         return QA_pool
 
@@ -827,7 +830,12 @@ class InternLM(torch.nn.Module):
     def generate(self, data, prompt_type='module1', num_options=5):
         prompt, additional_system_prompt = self.prompt(data, prompt_type, self.config, num_options=num_options)
         response = []
-        llm_batch_size = 1 if prompt_type in ['final'] else self.max_batch_size
+        if prompt_type == 'final':
+            llm_batch_size = 1
+        elif prompt_type in ['stage4_understanding', 'stage4']:
+            llm_batch_size = 2
+        else:
+            llm_batch_size = self.max_batch_size
         for i in range(0, len(prompt), llm_batch_size):
             response += self.model.batch_chat(self.tokenizer, prompt[i: i + llm_batch_size],
                                               max_new_tokens=self.config.internlm.max_new_tokens,
@@ -1570,7 +1578,10 @@ class VideoLLaVA(torch.nn.Module):
         # initialize QA_pool. save video and image result {video: {Q, A} pair, image: {frame_id, Q, A} pair}
         QA_pool = []
         # reasoning over video
-        QA_pool += self.video_predict(prog_step, questions)
+        if 'IMAGE' in output_var:
+            pass
+        else:
+            QA_pool += self.video_predict(prog_step, questions)
         prog_step.state[output_var] = QA_pool
         return QA_pool
 

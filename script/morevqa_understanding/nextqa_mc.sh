@@ -19,7 +19,7 @@
 
 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding.py \
     --options \
-    exp_name new_pipeline_fps1_notopk_imgvid_newstage4 \
+    exp_name new_pipeline_fps1_notopk_imgvidall_selectedwindow_all_shortanswer_saved2_check_github_version_final_check_final_check \
     dataset.dataset_name NExTQA \
     dataset.data_path datas/NExT-QA \
     dataset.split val \
@@ -29,10 +29,12 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
     batch_size 200 \
     log_freq 20 \
     video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+    video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
     image_vlm_type internlmxcomposer \
     video_vlm_type videollava \
     retrieve_type univtg \
     llm_type internlm \
+    internlm.max_batch_size 3 \
     frame_id_selection_num 16 \
     viclip.topk -1 \
     mode morevqa_understanding

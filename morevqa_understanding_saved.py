@@ -22,10 +22,10 @@ def load_video_context(config, video_id, vlm_answer):
     contexts = []
     # context formatting
     # add global video caption
-    contexts.append(datas_vid[video_id])
+    contexts.append(f"[video]caption:{datas_vid[video_id]}")
     # add frame caption
-    # for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
-    #     contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+    for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
+        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
     results = '[global information]' + '\n' + '\n'.join(contexts)
     if vlm_answer:
         results += '\n' + '[local information]'
@@ -67,7 +67,7 @@ def main():
         dataloader.sampler.set_epoch(-1)
     
     # load saved result
-    with open('/hub_data1/jinyoungkim/ModularReasoning/results/NExTQA/val/morevqa_understanding/new_pipeline_2024-10-29_04-52/external_memory.json', 'r') as f:
+    with open('/hub_data1/jinyoungkim/ModularReasoning/results/NExTQA/val/morevqa_understanding/new_pipeline_fps1_notopk_imgvid_selectedwindow_all_2024-11-03_19-36/external_memory.json', 'r') as f:
         saved_data = json.load(f)
     saved_data = {item["sample_id"]: {k: v for k, v in item.items()} for item in saved_data}
     
@@ -189,10 +189,10 @@ def main():
         # update External Memory (understanding)
         for idx, S4_und in enumerate(S4_understanding): EXTERNAL_MEMORY[idx]['S4_understanding'] = S4_und
         
-        # # Stage4 processing then update External Memory (imageQA)
-        # logging.info('Start stage4[image] processing')
-        # S4_input = [{'program': program, 'image': image} for program, image in zip(S4_programs, batch['image'])]
-        # EXTERNAL_MEMORY = Stage4_image(config, EXTERNAL_MEMORY, data=S4_input, stage='stage4_image', device=device)
+        # Stage4 processing then update External Memory (imageQA)
+        logging.info('Start stage4[image] processing')
+        S4_input = [{'program': program, 'image': image} for program, image in zip(S4_programs, batch['image'])]
+        EXTERNAL_MEMORY = Stage4_image(config, EXTERNAL_MEMORY, data=S4_input, stage='stage4_image', device=device)
 
         # Stage4 processing then update External Memory (videoQA)
         logging.info('Start stage4[video] processing')
