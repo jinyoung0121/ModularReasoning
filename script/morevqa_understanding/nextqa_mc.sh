@@ -17,31 +17,9 @@
 #     mode morevqa_understanding \
 #     frame_id_selection_num 16
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding_saved2.py \
-    --options \
-    exp_name frame_remove1 \
-    dataset.dataset_name NExTQA \
-    dataset.data_path datas/NExT-QA \
-    dataset.split val \
-    dataset.version multiplechoice \
-    dataset.fps 1 \
-    dataset.start_sample 0 \
-    batch_size 200 \
-    log_freq 20 \
-    video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
-    video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
-    image_vlm_type internlmxcomposer \
-    video_vlm_type videollava \
-    retrieve_type univtg \
-    llm_type internlm \
-    internlm.max_batch_size 3 \
-    frame_id_selection_num 16 \
-    viclip.topk -1 \
-    mode morevqa_understanding
-
-# CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_skipconnection.py \
+# CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding_saved.py \
 #     --options \
-#     exp_name skipconnection_withvidcap \
+#     exp_name ablation_noViCLIP_debug \
 #     dataset.dataset_name NExTQA \
 #     dataset.data_path datas/NExT-QA \
 #     dataset.split val \
@@ -59,5 +37,137 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 
 #     internlm.max_batch_size 3 \
 #     frame_id_selection_num 16 \
 #     viclip.topk -1 \
-#     enable_skipconnection True \
+#     mode morevqa_understanding
+
+
+# CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding_saved.py \
+#     --options \
+#     exp_name ablation_noViCLIP_debug \
+#     dataset.dataset_name NExTQA \
+#     dataset.data_path datas/NExT-QA \
+#     dataset.split val \
+#     dataset.version multiplechoice \
+#     dataset.fps 1 \
+#     dataset.start_sample 0 \
+#     batch_size 200 \
+#     log_freq 20 \
+#     video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+#     video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
+#     image_vlm_type internlmxcomposer \
+#     video_vlm_type videollava \
+#     retrieve_type univtg \
+#     llm_type internlm \
+#     internlm.max_batch_size 3 \
+#     frame_id_selection_num 16 \
+#     viclip.topk -1 \
+#     mode morevqa_understanding
+
+# CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding_saved.py \
+#     --options \
+#     exp_name ablation_novideoMLLM \
+#     dataset.dataset_name NExTQA \
+#     dataset.data_path datas/NExT-QA \
+#     dataset.split val \
+#     dataset.version multiplechoice \
+#     dataset.fps 1 \
+#     dataset.start_sample 0 \
+#     batch_size 200 \
+#     log_freq 20 \
+#     video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+#     video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
+#     image_vlm_type internlmxcomposer \
+#     video_vlm_type videollava \
+#     retrieve_type univtg \
+#     llm_type internlm \
+#     internlm.max_batch_size 3 \
+#     frame_id_selection_num 16 \
+#     viclip.topk -1 \
+#     mode morevqa_understanding
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node 8 --master_port=1245 morevqa_understanding_nostage2.py \
+    --options \
+    exp_name stageablation_nostage2 \
+    dataset.dataset_name NExTQA \
+    dataset.data_path datas/NExT-QA \
+    dataset.split val \
+    dataset.version multiplechoice \
+    dataset.fps 1 \
+    dataset.start_sample 0 \
+    batch_size 200 \
+    log_freq 10 \
+    video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+    video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
+    image_vlm_type internlmxcomposer \
+    video_vlm_type videollava \
+    retrieve_type univtg \
+    llm_type internlm \
+    internlm.max_batch_size 3 \
+    frame_id_selection_num 16 \
+    viclip.topk -1 \
+    mode morevqa_understanding
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node 8 --master_port=1245 morevqa_understanding_nostage3.py \
+    --options \
+    exp_name stageablation_nostage3 \
+    dataset.dataset_name NExTQA \
+    dataset.data_path datas/NExT-QA \
+    dataset.split val \
+    dataset.version multiplechoice \
+    dataset.fps 1 \
+    dataset.start_sample 0 \
+    batch_size 200 \
+    log_freq 10 \
+    video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+    video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
+    image_vlm_type internlmxcomposer \
+    video_vlm_type videollava \
+    retrieve_type univtg \
+    llm_type internlm \
+    internlm.max_batch_size 3 \
+    frame_id_selection_num 16 \
+    viclip.topk -1 \
+    mode morevqa_understanding
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node 8 --master_port=1245 morevqa_understanding_onlystage4.py \
+    --options \
+    exp_name stageablation_onlystage4 \
+    dataset.dataset_name NExTQA \
+    dataset.data_path datas/NExT-QA \
+    dataset.split val \
+    dataset.version multiplechoice \
+    dataset.fps 1 \
+    dataset.start_sample 0 \
+    batch_size 200 \
+    log_freq 10 \
+    video_context datas/NExT-QA/nextqa/internlmxcomposer2_brief_val.json \
+    video_context_vid datas/NExT-QA/nextqa/videollava_global_stepbystep_val.json \
+    image_vlm_type internlmxcomposer \
+    video_vlm_type videollava \
+    retrieve_type univtg \
+    llm_type internlm \
+    internlm.max_batch_size 3 \
+    frame_id_selection_num 16 \
+    viclip.topk -1 \
+    mode morevqa_understanding
+
+# CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.run --nproc_per_node 4 --master_port=1245 morevqa_understanding.py \
+#     --options \
+#     exp_name internlmxcomposer2_internlm \
+#     dataset.dataset_name STAR \
+#     dataset.data_path datas/STAR \
+#     dataset.split val \
+#     dataset.version multiplechoice \
+#     dataset.fps 1 \
+#     dataset.start_sample 0 \
+#     batch_size 100 \
+#     log_freq 10 \
+#     video_context datas/STAR/internlmxcomposer2_brief_val.json \
+#     video_context_vid datas/STAR/videollava_global_stepbystep_val.json \
+#     image_vlm_type internlmxcomposer \
+#     video_vlm_type videollava \
+#     retrieve_type univtg \
+#     llm_type internlm \
+#     internlm.max_batch_size 3 \
+#     frame_id_selection_num 16 \
+#     viclip.topk -1 \
 #     mode morevqa_understanding

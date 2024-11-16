@@ -198,7 +198,7 @@ def Stage4_image(config, EXTERNAL_MEMORY, **kwargs):
                 # answer formatting
                 answers = []
                 for qa in sorted_QA_pools:
-                    answers.append(f"[frame{qa['frame_id']:>3}]{qa['question']}: {qa['answer']}")
+                    answers.append(f"[frame{qa['frame_id']:>4}]{qa['question']}: {qa['answer']}")
                 EXTERNAL_MEMORY[i]['VLM_answers']['image'] = '\n'.join(answers)
             except:
                 EXTERNAL_MEMORY[i]['frame_ids'] = []

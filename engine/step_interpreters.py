@@ -832,12 +832,15 @@ class InternLM(torch.nn.Module):
         response = []
         if prompt_type == 'final':
             llm_batch_size = 1
-        elif prompt_type in ['stage4_understanding', 'stage4']:
-            llm_batch_size = 2
+        elif prompt_type in ['stage4_understanding', 'stage4', 'stage4_CoT']:
+            llm_batch_size = 1
         else:
             llm_batch_size = self.max_batch_size
         for i in range(0, len(prompt), llm_batch_size):
-            response += self.model.batch_chat(self.tokenizer, prompt[i: i + llm_batch_size],
+            truncate_len = 29000
+            batched_input = prompt[i: i + llm_batch_size]
+            batched_input = [b[:truncate_len] for b in batched_input]
+            response += self.model.batch_chat(self.tokenizer, batched_input,
                                               max_new_tokens=self.config.internlm.max_new_tokens,
                                               do_sample=self.config.internlm.do_sample,
                                             #   temperature=self.config.internlm.temperature,
@@ -1444,6 +1447,7 @@ class RETRIEVEInterpreterUniVTG2(RETRIEVEInterpreterUniVTG):
         temporal_window = self.ranking_window(video_path, windows=temporal_windows, text=query, start_idx=start_idx, end_idx=end_idx)
         # saliencys = predictions[0]['pred_saliency_scores'] # for saliency/hightlight detection
         s_idx, e_idx = temporal_window[0], temporal_window[1]
+        # s_idx, e_idx = temporal_windows[0][0], temporal_windows[0][1]
         # when temporal expansion is required, update the start_idx (s_idx) and end_idx (e_idx)
         # if is_expand == 'TRUE':
         if prog_step.state['qa_type'] == 'reasoning':

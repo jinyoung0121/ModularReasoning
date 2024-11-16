@@ -86,9 +86,9 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     if prompt_type == 'planning':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/planning_global.prompt'
-    elif prompt_type == 'stage1_noreasoning':
+    elif prompt_type == 'stage1_nounderstanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/stage1_noreasoning.prompt'
+        prompt_path = 'datas/prompt/stage1_nounderstanding.prompt'
     elif prompt_type == 'stage1_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage1_understanding.prompt'
@@ -98,9 +98,9 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     elif prompt_type == 'stage1_CoT':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage1_CoT.prompt'
-    elif prompt_type == 'stage2_noreasoning':
+    elif prompt_type == 'stage2_nounderstanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/stage2_noreasoning.prompt'
+        prompt_path = 'datas/prompt/stage2_nounderstanding.prompt'
     elif prompt_type == 'stage2_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage2_understanding.prompt'
@@ -110,9 +110,9 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     elif prompt_type == 'stage2_CoT':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage2_CoT.prompt'
-    elif prompt_type == 'stage3_noreasoning':
+    elif prompt_type == 'stage3_nounderstanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/stage3_noreasoning.prompt'
+        prompt_path = 'datas/prompt/stage3_nounderstanding.prompt'
     elif prompt_type == 'stage3_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage3_understanding.prompt'
@@ -122,9 +122,9 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     elif prompt_type == 'stage3_CoT':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage3_CoT.prompt'
-    elif prompt_type == 'stage4_noreasoning':
+    elif prompt_type == 'stage4_nounderstanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
-        prompt_path = 'datas/prompt/stage4_noreasoning.prompt'
+        prompt_path = 'datas/prompt/stage4_nounderstanding.prompt'
     elif prompt_type == 'stage4_understanding':
         additional_system_prompt = 'Only answer with the final answer similar to given examples.'
         prompt_path = 'datas/prompt/stage4_understanding.prompt'
@@ -155,12 +155,12 @@ def load_llm_prompt(data, prompt_type, config, num_options=5):
     with open(prompt_path) as f:
         base_prompt = f.read().strip()
     
-    if prompt_type in ['planning', 'stage1_understanding', 'stage2_understanding', 'stage3_understanding', 'stage1_CoT', 'stage2_CoT', 'stage3_CoT']:
+    if prompt_type in ['planning', 'stage1_understanding', 'stage2_understanding', 'stage3_understanding', 'stage1_CoT', 'stage2_CoT', 'stage3_CoT', 'stage1_nounderstanding', 'stage2_nounderstanding', 'stage3_nounderstanding']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QUESTION_HERE', d['question']) for d in data]
         else:
             raise TypeError('data must be list of strings')
-    elif prompt_type in ['stage4_understanding', 'stage4_CoT']:
+    elif prompt_type in ['stage4_understanding', 'stage4_CoT', 'stage4_nounderstanding']:
         if isinstance(data, list):
             prompt = [base_prompt.replace('INSERT_QATYPE_HERE', d['qa_type']).replace('INSERT_QUESTION_HERE', d['question']) for d in data]
         else:

@@ -7,23 +7,28 @@ import datetime
 import pathlib
 import torch.multiprocessing as mp
 from configs import config
-from engine import Program_generation, Module1, Module2, Module3
+from engine import Global_planning, Program_generation, Program_generation_CoT, Understanding_generation, Stage1, Stage2, Stage3, Stage4_image, Stage4_video
 import util
 from datasets import get_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 def load_video_context(config, video_id, vlm_answer):
+    
     with open(config.video_context, 'r') as f:
         datas = json.load(f)
     contexts = []
     # context formatting
+    # add frame caption
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
-        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}.")
+        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
     results = '[entire video]' + '\n' + '\n'.join(contexts)
     if vlm_answer:
         results += '\n' + '[selected window]'
-        results += '\n' + vlm_answer
+    if vlm_answer['video']:
+        results += '\n' + vlm_answer['video']
+    if vlm_answer['image']:
+        results += '\n' + vlm_answer['image']
     return results
 
 def main():
@@ -56,7 +61,7 @@ def main():
 
     if config.distributed:
         dataloader.sampler.set_epoch(-1)
-    
+
     # initialize information list
     all_results = []
     all_answers = []
@@ -68,18 +73,18 @@ def main():
     all_memories = []
     all_num_frames = []
 
-    all_m3_prog = []
-    all_m2_prog = []
-    all_m1_prog = []
+    all_s4_prog = []
+    all_s3_prog = []
+    all_s2_prog = []
+    all_s1_prog = []
     all_timespan = []
-    
+
     start_time = time.time()
     logging.info('Start run')
     metric_logger = util.MetricLogger(delimiter='  ')
-    header = '[MoReVQA]'
+    header = '[Retrieve baseline]'
     for i, batch in enumerate(metric_logger.log_every(dataloader, 1, header)):
         inner_start_time = time.time()
-        logging.info('*'* 90)
         logging.info(f'Start inner run [{i + 1:>3}/{len(dataloader):>3}]')
         
         # initialize External Memory
@@ -91,14 +96,22 @@ def main():
                                     'num_frames': frames.size(0),
                                     'question': query,
                                     'frame_ids': [idx for idx in range(frames.size(0))],
-                                    'event_queue': [],
+                                    'anchor_frame_ids': [],
+                                    'event_queue': ['none','none'],
                                     'conjunction': 'none',
                                     'require_ocr': False,
                                     'qa_type': '',
+                                    'planning_error': None,
                                     'error': None,
-                                    'VLM_answers': None,})
+                                    'VLM_answers': {'video': [], 'image': []},
+                                    'planning': None,
+                                    'process_stage1': True,
+                                    'process_stage2': True,
+                                    'process_stage3': True,
+                                    'process_stage4': True,
+                                    'process_video':True,})
             all_num_frames.append(frames.size(0))
-        
+
         # update information
         all_answers += batch['answer']
         all_possible_answers += batch['possible_answers']
@@ -109,37 +122,57 @@ def main():
 
         if config.eval_grounding:
             all_timespan += batch['timespan']
-    
-        # Module1 program generation
-        logging.info('Start module1 program generation')
-        M1_input = [{'question': memory['question'], 'is_process': True} for memory in EXTERNAL_MEMORY]
-        M1_programs = Program_generation(config, device=device, data=M1_input, prompt_type='module1')
         
-        # Module1 processing then update External Memory
-        logging.info('Start module1 processing')
-        M1_input = [{'program': program} for program in M1_programs]
-        EXTERNAL_MEMORY = Module1(config, EXTERNAL_MEMORY, data=M1_input, stage='module1', device=device)
+        # # Global planning
+        # logging.info('Start global planning')
+        # planning_input = [{'question': memory['question'], 'is_process': memory['process_planning']} for memory in EXTERNAL_MEMORY]
+        # EXTERNAL_MEMORY = Global_planning(config, EXTERNAL_MEMORY, device=device, data=planning_input, prompt_type='planning')
         
-        # Module2 program generation
-        logging.info('Start module2 program generation')
-        M2_input = [{'event_queue': memory['event_queue'], 'conjunction': memory['conjunction'], 'image': image, 'is_process': True} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
-        M2_programs = Program_generation(config, device=device, data=M2_input, prompt_type='module2')
+        # Stage1 understanding and program generation
+        logging.info('Start stage1 understanding and program generation')
+        S1_input = [{'question': memory['question'], 'qa_type': memory['qa_type'], 'is_process': memory['process_stage1']} for memory in EXTERNAL_MEMORY]
+        S1_programs = Program_generation_CoT(config, device=device, data=S1_input, prompt_type='stage1_nounderstanding')
         
-        # Module2 processing then update External Memory
-        logging.info('Start module2 processing')
-        M2_input = [{'program': program, 'image': image} for program, image in zip(M2_programs, batch['image'])]
-        EXTERNAL_MEMORY = Module2(config, EXTERNAL_MEMORY, data=M2_input, stage='module2', device=device)
+        # Stage1 processing then update External Memory
+        logging.info('Start stage1 processing')
+        S1_input = [{'program': program} for program in S1_programs]
+        EXTERNAL_MEMORY = Stage1(config, EXTERNAL_MEMORY, data=S1_input, stage='stage1', device=device)
         
-        # Module3 program generation
-        logging.info('Start module3 program generation')
-        M3_input = [{'question': memory['question'], 'frame_ids': memory['frame_ids'], 'require_ocr': memory['require_ocr'], 'qa_type': memory['qa_type'], 'is_process': True} for memory in EXTERNAL_MEMORY]
-        M3_programs = Program_generation(config, device=device, data=M3_input, prompt_type='module3')
+        # Stage2 understanding and program generation
+        logging.info('Start stage2 understanding and program generation')
+        S2_input = [{'question': memory['event_queue'][0], 'image': image, 'qa_type': memory['qa_type'], 'is_process': memory['process_stage2']} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
+        S2_programs = Program_generation_CoT(config, device=device, data=S2_input, prompt_type='stage2_nounderstanding')
         
-        # Module3 processing than update External Memory
-        logging.info('Start module3 processing')
-        M3_input = [{'program': program, 'image': image} for program, image in zip(M3_programs, batch['image'])]
-        EXTERNAL_MEMORY = Module3(config, EXTERNAL_MEMORY, data=M3_input, stage='module3', device=device)
+        # Stage2 processing then update External Memory
+        logging.info('Start stage2 processing')
+        S2_input = [{'program': program, 'image': image, 'video_path': video_path} for program, image, video_path in zip(S2_programs, batch['image'], batch['video_path'])]
+        EXTERNAL_MEMORY = Stage2(config, EXTERNAL_MEMORY, data=S2_input, stage='stage2', device=device)
         
+        # Stage3 understanding and program generation
+        logging.info('Start stage3 understanding and program generation')
+        S3_input = [{'question': memory['event_queue'][1], 'image': image, 'qa_type': memory['qa_type'], 'is_process': memory['process_stage3']} for memory, image in zip(EXTERNAL_MEMORY, batch['image'])]
+        S3_programs = Program_generation_CoT(config, device=device, data=S3_input, prompt_type='stage3_nounderstanding')
+        
+        # Stage3 processing then update External Memory
+        logging.info('Start stage3 processing')
+        S3_input = [{'program': program, 'image': image, 'video_path': video_path} for program, image, video_path in zip(S3_programs, batch['image'], batch['video_path'])]
+        EXTERNAL_MEMORY = Stage3(config, EXTERNAL_MEMORY, data=S3_input, stage='stage3', device=device)
+        
+        # Stage4 understanding and program generation
+        logging.info('Start stage4 understanding and program generation')
+        S4_input = [{'question': memory['question'], 'frame_ids': memory['frame_ids'], 'require_ocr': memory['require_ocr'], 'qa_type': memory['qa_type'], 'is_process': memory['process_stage4']} for memory in EXTERNAL_MEMORY]
+        S4_programs = Program_generation_CoT(config, device=device, data=S4_input, prompt_type='stage4_nounderstanding')
+        
+        # Stage4 processing then update External Memory (imageQA)
+        logging.info('Start stage4[image] processing')
+        S4_input = [{'program': program, 'image': image} for program, image in zip(S4_programs, batch['image'])]
+        EXTERNAL_MEMORY = Stage4_image(config, EXTERNAL_MEMORY, data=S4_input, stage='stage4_image', device=device)
+
+        # Stage4 processing then update External Memory (videoQA)
+        logging.info('Start stage4[video] processing')
+        S4_input = [{'program': program, 'image': image, 'video_path': video_path} for program, image, video_path in zip(S4_programs, batch['image'], batch['video_path'])]
+        EXTERNAL_MEMORY = Stage4_video(config, EXTERNAL_MEMORY, data=S4_input, stage='stage4_video', device=device)
+
         # Final prediction
         logging.info('Start final prediction')
         Final_input = [{'video_context': load_video_context(config, video_id, memory['VLM_answers']), 'question': question, 'option': option, 'is_process': True} \
@@ -150,14 +183,16 @@ def main():
         all_results += Final_predictions
         all_memories += EXTERNAL_MEMORY
 
-        # update m1, m2, m3 program (intermediate generated program)
-        m3_prog_list = [i.split('\n') for i in M3_programs]
-        m2_prog_list = [i.split('\n') for i in M2_programs]
-        m1_prog_list = [i.split('\n') for i in M1_programs]
-        all_m3_prog += m3_prog_list
-        all_m2_prog += m2_prog_list
-        all_m1_prog += m1_prog_list
-
+        # update s1, s2, m3 program (intermediate generated program)
+        s4_prog_list = [i.split('\n') for i in S4_programs]
+        s3_prog_list = [i.split('\n') for i in S3_programs]
+        s2_prog_list = [i.split('\n') for i in S2_programs]
+        s1_prog_list = [i.split('\n') for i in S1_programs]
+        all_s4_prog += s4_prog_list
+        all_s3_prog += s3_prog_list
+        all_s2_prog += s2_prog_list
+        all_s1_prog += s1_prog_list
+        
         # compute metric
         try:
             logging.info('Start evaluating QA')
@@ -203,17 +238,21 @@ def main():
             util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
             util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
-            m1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm1_prog': all_m1_prog}
-            m1_prog_save = list(map(lambda x: dict(zip(m1_prog_save.keys(), x)), zip(*m1_prog_save.values())))
-            util.save_result(m1_prog_save, results_dir, 'm1_program', remove_duplicate='sample_id',)
+            s1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's1_prog': all_s1_prog}
+            s1_prog_save = list(map(lambda x: dict(zip(s1_prog_save.keys(), x)), zip(*s1_prog_save.values())))
+            util.save_result(s1_prog_save, results_dir, 's1_program', remove_duplicate='sample_id',)
             
-            m2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm2_prog': all_m2_prog}
-            m2_prog_save = list(map(lambda x: dict(zip(m2_prog_save.keys(), x)), zip(*m2_prog_save.values())))
-            util.save_result(m2_prog_save, results_dir, 'm2_program', remove_duplicate='sample_id',)
+            s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's2_prog': all_s2_prog}
+            s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
+            util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
 
-            m3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm3_prog': all_m3_prog}
-            m3_prog_save = list(map(lambda x: dict(zip(m3_prog_save.keys(), x)), zip(*m3_prog_save.values())))
-            util.save_result(m3_prog_save, results_dir, 'm3_program', remove_duplicate='sample_id',)
+            s3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's3_prog': all_s3_prog}
+            s3_prog_save = list(map(lambda x: dict(zip(s3_prog_save.keys(), x)), zip(*s3_prog_save.values())))
+            util.save_result(s3_prog_save, results_dir, 's3_program', remove_duplicate='sample_id',)
+
+            s4_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's4_prog': all_s4_prog}
+            s4_prog_save = list(map(lambda x: dict(zip(s4_prog_save.keys(), x)), zip(*s4_prog_save.values())))
+            util.save_result(s4_prog_save, results_dir, 's4_program', remove_duplicate='sample_id',)
 
         inner_total_time = time.time() - inner_start_time
         inner_total_time_str = str(datetime.timedelta(seconds=int(inner_total_time)))
@@ -270,17 +309,21 @@ def main():
         util.save_result(final_datas, results_dir, 'results', remove_duplicate='sample_id')
         util.save_result(all_memories, results_dir, 'external_memory', remove_duplicate='sample_id')
 
-        m1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm1_prog': all_m1_prog}
-        m1_prog_save = list(map(lambda x: dict(zip(m1_prog_save.keys(), x)), zip(*m1_prog_save.values())))
-        util.save_result(m1_prog_save, results_dir, 'm1_program', remove_duplicate='sample_id',)
+        s1_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's1_prog': all_s1_prog}
+        s1_prog_save = list(map(lambda x: dict(zip(s1_prog_save.keys(), x)), zip(*s1_prog_save.values())))
+        util.save_result(s1_prog_save, results_dir, 's1_program', remove_duplicate='sample_id',)
         
-        m2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm2_prog': all_m2_prog}
-        m2_prog_save = list(map(lambda x: dict(zip(m2_prog_save.keys(), x)), zip(*m2_prog_save.values())))
-        util.save_result(m2_prog_save, results_dir, 'm2_program', remove_duplicate='sample_id',)
+        s2_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's2_prog': all_s2_prog}
+        s2_prog_save = list(map(lambda x: dict(zip(s2_prog_save.keys(), x)), zip(*s2_prog_save.values())))
+        util.save_result(s2_prog_save, results_dir, 's2_program', remove_duplicate='sample_id',)
 
-        m3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 'm3_prog': all_m3_prog}
-        m3_prog_save = list(map(lambda x: dict(zip(m3_prog_save.keys(), x)), zip(*m3_prog_save.values())))
-        util.save_result(m3_prog_save, results_dir, 'm3_program', remove_duplicate='sample_id',)
+        s3_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's3_prog': all_s3_prog}
+        s3_prog_save = list(map(lambda x: dict(zip(s3_prog_save.keys(), x)), zip(*s3_prog_save.values())))
+        util.save_result(s3_prog_save, results_dir, 's3_program', remove_duplicate='sample_id',)
+
+        s4_prog_save = {'sample_id': all_sample_ids, 'video_id': all_ids, 'query': all_queries, 's4_prog': all_s4_prog}
+        s4_prog_save = list(map(lambda x: dict(zip(s4_prog_save.keys(), x)), zip(*s4_prog_save.values())))
+        util.save_result(s4_prog_save, results_dir, 's4_program', remove_duplicate='sample_id',)
     
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

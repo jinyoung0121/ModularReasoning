@@ -112,11 +112,13 @@ def Program_generation_CoT(config, **kwargs):
         valid_outputs = model.generate(valid_program, prompt_type=kwargs['prompt_type'], num_options=config.dataset.num_options)
         results = ['none'] * len(data)
         for (k, _), output in zip(valid_datas, valid_outputs):
-            try:
-                results[k] = output.split('The answer is:\n')[1]
-            except:
-                results[k] = 'CODE ERROR!'
-            
+            if 'CoT' in kwargs['prompt_type']:
+                try:
+                    results[k] = output.split('The answer is:\n')[1]
+                except:
+                    results[k] = 'CODE ERROR!'
+            else:
+                results[k] = output
         programs += results
     
     metric_logger.synchronize_between_processes()

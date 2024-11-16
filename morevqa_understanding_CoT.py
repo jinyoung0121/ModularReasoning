@@ -15,20 +15,16 @@ from torch.utils.data.distributed import DistributedSampler
 
 def load_video_context(config, video_id, vlm_answer):
     
-    with open(config.video_context_vid, 'r') as f:
-        datas_vid = json.load(f)
     with open(config.video_context, 'r') as f:
         datas = json.load(f)
     contexts = []
     # context formatting
-    # add global video caption
-    contexts.append(f"[video]caption:{datas_vid[video_id]}")
     # add frame caption
     for frame_idx, caption in zip(datas[video_id]['frame_idx'], datas[video_id]['captions']):
-        contexts.append(f"[frame{frame_idx:>3}]caption: {caption}")
-    results = '[global information]' + '\n' + '\n'.join(contexts)
+        contexts.append(f"[frame{frame_idx:>4}]caption: {caption}")
+    results = '[entire video]' + '\n' + '\n'.join(contexts)
     if vlm_answer:
-        results += '\n' + '[local information]'
+        results += '\n' + '[selected window]'
     if vlm_answer['video']:
         results += '\n' + vlm_answer['video']
     if vlm_answer['image']:
